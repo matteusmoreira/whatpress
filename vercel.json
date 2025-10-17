@@ -1,11 +1,5 @@
 {
   "version": 2,
   "buildCommand": "vite build",
-  "outputDirectory": "dist",
-  "functions": {
-    "api/*.ts": {
-      "runtime": "nodejs18.x",
-      "maxDuration": 10
-    }
-  }
+  "outputDirectory": "dist"
 }
