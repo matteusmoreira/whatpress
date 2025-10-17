@@ -4,24 +4,8 @@
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "framework": "vite",
-  "functions": {
-    "api/webhook.ts": {
-      "runtime": "nodejs18.x"
-    },
-    "api/health.ts": {
-      "runtime": "nodejs18.x"
-    }
-  },
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/index.html"
-    }
-  ],
+
+
   "headers": [
     {
       "source": "/api/(.*)",
@@ -58,20 +42,7 @@
       ]
     }
   ],
-  "env": {
-    "VITE_SUPABASE_URL": "@vite_supabase_url",
-    "VITE_SUPABASE_ANON_KEY": "@vite_supabase_anon_key",
-    "VITE_EVOLUTION_API_URL": "@vite_evolution_api_url",
-    "VITE_EVOLUTION_API_KEY": "@vite_evolution_api_key",
-    "VITE_WEBHOOK_URL": "@vite_webhook_url"
-  },
-  "build": {
-    "env": {
-      "SUPABASE_URL": "@supabase_url",
-      "SUPABASE_SERVICE_ROLE": "@supabase_service_role",
-      "WEBHOOK_SECRET": "@webhook_secret"
-    }
-  },
+
   "rewrites": [
     {
       "source": "/api/(.*)",

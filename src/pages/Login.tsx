@@ -184,7 +184,7 @@ export default function Login() {
 
               <Button 
                 type="submit" 
-                variant="gradient" 
+                variant="default" 
                 size="lg" 
                 className="w-full"
                 disabled={isSubmitting}

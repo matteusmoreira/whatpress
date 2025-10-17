@@ -104,7 +104,7 @@ export default function Landing() {
               <Button variant="outline">Entrar</Button>
             </Link>
             <Link to="/register">
-              <Button variant="gradient">Começar Grátis</Button>
+              <Button variant="default">Começar Grátis</Button>
             </Link>
           </div>
         </div>
@@ -122,7 +122,7 @@ export default function Landing() {
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
               <Link to="/register">
-                <Button size="lg" variant="hero" className="text-lg px-8 py-6">
+                <Button size="lg" variant="default" className="text-lg px-8 py-6">
                   Começar Gratuitamente
                   <ArrowRight className="ml-2 h-5 w-5" />
                 </Button>
@@ -202,7 +202,7 @@ export default function Landing() {
                   ))}
                   <Button 
                     className="w-full mt-6" 
-                    variant={plan.popular ? "hero" : "outline"}
+                    variant={plan.popular ? "default" : "outline"}
                     size="lg"
                   >
                     Começar Agora
@@ -222,7 +222,7 @@ export default function Landing() {
             Junte-se a milhares de empresas que já transformaram seus resultados com o Whatpress
           </p>
           <Link to="/register">
-            <Button size="lg" variant="hero" className="text-lg px-8 py-6">
+            <Button size="lg" variant="default" className="text-lg px-8 py-6">
               Começar Gratuitamente
               <ArrowRight className="ml-2 h-5 w-5" />
             </Button>

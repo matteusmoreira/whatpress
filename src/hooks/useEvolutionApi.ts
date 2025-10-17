@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { whatsappInstanceService, WhatsAppInstance } from '@/services/whatsappInstanceService';
-import { evolutionApi, WhatsAppMessage, WhatsAppContact } from '@/services/evolutionApi';
+import { evolutionApi, WhatsAppMessage, WhatsAppContact, EvolutionApiService } from '@/services/evolutionApi';
 import { useToast } from '@/hooks/use-toast';
 
 export interface ConnectionStatus {
@@ -349,7 +349,7 @@ export function useEvolutionApi() {
         throw new Error('Instância não está conectada');
       }
 
-      const message = await evolutionApi.sendTextMessage(instanceName, to, text);
+      const message = await evolutionApi.sendTextMessage(to, text);
       
       toast({
         title: "Mensagem enviada",
@@ -376,17 +376,6 @@ export function useEvolutionApi() {
     loadInstances();
   }, [loadInstances]);
 
-  // Polling para atualizar status das instâncias (a cada 30 segundos)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (instances.length > 0 && !loading) {
-        checkConnectionStatus();
-      }
-    }, 30000); // 30 segundos
-
-    return () => clearInterval(interval);
-  }, [instances, loading, checkConnectionStatus]);
-
   return {
     // Estados
     instances,
@@ -409,81 +398,3 @@ export function useEvolutionApi() {
     sendMessage
   };
 }
-
-  // Polling para atualizar status das instâncias (a cada 15 segundos para ser mais responsivo)
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    
-    const startPolling = () => {
-      interval = setInterval(async () => {
-        if (instances.length > 0 && !loading) {
-          console.log('🔄 Polling: verificando status das instâncias...');
-          
-          // Verificar status de todas as instâncias que não estão conectadas
-          const instancesToCheck = instances.filter(instance => 
-            instance.status !== 'connected' || 
-            (instance.status === 'connecting' && instance.qr_code) // Verificar instâncias conectando com QR
-          );
-          
-          if (instancesToCheck.length > 0) {
-            console.log(`📋 Verificando ${instancesToCheck.length} instâncias...`);
-            
-            // Verificar cada instância individualmente
-            for (const instance of instancesToCheck) {
-              try {
-                await checkConnectionStatus(instance.id);
-                // Pequeno delay entre verificações para não sobrecarregar a API
-                await new Promise(resolve => setTimeout(resolve, 1000));
-              } catch (error) {
-                console.error(`❌ Erro ao verificar instância ${instance.id}:`, error);
-              }
-            }
-          } else {
-            console.log('✅ Todas as instâncias estão conectadas, polling menos frequente');
-          }
-        }
-      }, 15000); // 15 segundos
-    };
-
-    // Iniciar polling apenas se há instâncias
-    if (instances.length > 0) {
-      startPolling();
-    }
-
-    return () => {
-      if (interval) {
-        clearInterval(interval);
-      }
-    };
-  }, [instances, loading, checkConnectionStatus]);
-
-  // Polling mais agressivo quando há instâncias conectando (a cada 5 segundos)
-  useEffect(() => {
-    let fastInterval: NodeJS.Timeout;
-    
-    const connectingInstances = instances.filter(instance => instance.status === 'connecting');
-    
-    if (connectingInstances.length > 0) {
-      console.log(`⚡ Polling rápido ativado para ${connectingInstances.length} instâncias conectando...`);
-      
-      fastInterval = setInterval(async () => {
-        if (!loading) {
-          for (const instance of connectingInstances) {
-            try {
-              console.log(`⚡ Verificação rápida da instância: ${instance.name}`);
-              await checkConnectionStatus(instance.id);
-              await new Promise(resolve => setTimeout(resolve, 500));
-            } catch (error) {
-              console.error(`❌ Erro na verificação rápida da instância ${instance.id}:`, error);
-            }
-          }
-        }
-      }, 5000); // 5 segundos para instâncias conectando
-    }
-
-    return () => {
-      if (fastInterval) {
-        clearInterval(fastInterval);
-      }
-    };
-  }, [instances, loading, checkConnectionStatus]);

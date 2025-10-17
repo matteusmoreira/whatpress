@@ -263,7 +263,7 @@ export default function CreateCampaign() {
       const campaignData = {
         ...formData,
         target_contacts: selectedContacts,
-        status: 'draft'
+        status: 'draft' as 'draft'
       }
       
       await createCampaign(campaignData)

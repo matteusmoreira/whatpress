@@ -295,7 +295,7 @@ export default function Register() {
 
                 <Button 
                   type="submit" 
-                  variant="gradient" 
+                  variant="default" 
                   size="lg" 
                   className="w-full"
                   disabled={isSubmitting}

@@ -90,7 +90,7 @@ export default function Analytics() {
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   const [realTimeData, setRealTimeData] = useState<any>(null)
   const [exportOptions, setExportOptions] = useState({
-    format: 'pdf',
+    format: 'pdf' as 'pdf' | 'excel' | 'csv',
     includeCharts: true,
     includeRawData: false,
     dateRange: {

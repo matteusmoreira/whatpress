@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import { evolutionApi, EvolutionApiService } from './evolutionApi'
+import { EvolutionApiService } from './evolutionApi'
 
 export interface WhatsAppInstance {
   id: string
@@ -237,7 +237,7 @@ export class WhatsAppInstanceService {
                 console.log(`📱 Número do telefone obtido: ${phoneNumber}`)
                 await this.updateInstance(instanceId, { 
                   phone_number: phoneNumber,
-                  qr_code: null // Limpar QR code quando conectado
+                  qr_code: undefined // Limpar QR code quando conectado
                 })
               }
             } catch (phoneError) {
@@ -382,7 +382,8 @@ export class WhatsAppInstanceService {
 
   // Atualizar status
   private async updateInstanceStatus(instanceId: string, status: string): Promise<void> {
-    await this.updateInstance(instanceId, { status, last_activity: new Date().toISOString() })
+    const mappedStatus = this.mapEvolutionStatus(status)
+    await this.updateInstance(instanceId, { status: mappedStatus, last_activity: new Date().toISOString() })
   }
 
   // Mapear status Evolution para nosso status interno

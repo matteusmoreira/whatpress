@@ -38,10 +38,13 @@ import {
   Archive,
   Star,
   Trash2,
+  RefreshCw,
+  CheckCheck,
   Download,
   Calendar
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { useToast } from '@/hooks/use-toast'
 import { supabase } from '@/lib/supabase'
 import { evolutionApi } from '@/services/evolutionApi'
 import { useMessages } from '@/hooks/useMessages'

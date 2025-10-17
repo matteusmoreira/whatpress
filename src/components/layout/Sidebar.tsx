@@ -182,7 +182,7 @@ export function Sidebar({ className }: SidebarProps) {
             <p className="text-xs text-muted-foreground mb-3">
               Desbloqueie recursos avançados
             </p>
-            <Button variant="gradient" size="sm" className="w-full">
+            <Button variant="default" size="sm" className="w-full">
               Upgrade
             </Button>
           </div>
