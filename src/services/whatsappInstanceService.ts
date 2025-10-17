@@ -37,7 +37,7 @@ export class WhatsAppInstanceService {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/(^-|-$)/g, '')
         .slice(0, 24) // evita nomes muito longos
-      const instanceName = `${slug || 'instance'}-${user.id.slice(0, 8)}-${Date.now()}`
+      const instanceName = `${slug || 'instance'}`
       
       // Criar instância no banco de dados primeiro
       const { data: instance, error: dbError } = await supabase
@@ -46,7 +46,7 @@ export class WhatsAppInstanceService {
           user_id: user.id,
           name: data.name,
           status: 'disconnected',
-          webhook_url: data.webhook_url || import.meta.env.VITE_WEBHOOK_URL || ((typeof window !== 'undefined' && window.location.hostname === 'localhost') ? 'http://localhost:3001/webhook' : `${window.location.origin}/webhook`),
+          webhook_url: data.webhook_url || import.meta.env.VITE_WEBHOOK_URL || ((typeof window !== 'undefined' && window.location.hostname === 'localhost') ? 'http://localhost:3001/api/webhook' : `${window.location.origin}/api/webhook`),
           api_key: instanceName // Usar o nome da instância como chave técnica (igual ao mostrado na Evolution)
         })
         .select()
@@ -75,8 +75,8 @@ export class WhatsAppInstanceService {
             qr_code: dataUri
           })
         }
-      } catch (evolutionError) {
-        console.error('Erro ao criar instância na Evolution API:', evolutionError)
+      } catch (evolutionError: any) {
+        console.error('Erro ao criar instância na Evolution API:', evolutionError?.message || evolutionError)
         // Não falhar completamente, apenas logar o erro
       }
 
@@ -139,7 +139,7 @@ export class WhatsAppInstanceService {
       const evolutionService = new EvolutionApiService({
         baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
         apiKey: import.meta.env.VITE_EVOLUTION_API_KEY || 'your-api-key',
-        instanceName: instance.api_key || `instance_${user.id}_${instanceId}`
+        instanceName: instance.api_key || instance.name
       })
 
       try {
@@ -195,7 +195,7 @@ export class WhatsAppInstanceService {
       const evolutionService = new EvolutionApiService({
         baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
         apiKey: import.meta.env.VITE_EVOLUTION_API_KEY || 'your-api-key',
-        instanceName: instance.api_key || `instance_${user.id}_${instanceId}`
+        instanceName: instance.api_key || instance.name
       })
 
       try {
@@ -241,7 +241,7 @@ export class WhatsAppInstanceService {
       const evolutionService = new EvolutionApiService({
         baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
         apiKey: import.meta.env.VITE_EVOLUTION_API_KEY || 'your-api-key',
-        instanceName: instance.api_key || `instance_${user.id}_${instanceId}`
+        instanceName: instance.api_key || instance.name
       })
 
       try {
@@ -250,19 +250,15 @@ export class WhatsAppInstanceService {
         console.error('Erro ao desconectar na Evolution API:', evolutionError)
       }
 
-      // Atualizar status no banco
-      await this.updateInstance(instanceId, {
-        status: 'disconnected',
-        qr_code: null,
-        phone_number: null
-      })
+      // Atualizar status para disconnected
+      await this.updateInstanceStatus(instanceId, 'disconnected')
     } catch (error) {
       console.error('Erro ao desconectar instância:', error)
       throw error
     }
   }
 
-  // Deletar instância
+  // Excluir instância
   async deleteInstance(instanceId: string): Promise<void> {
     try {
       const { data: { user }, error: userError } = await supabase.auth.getUser()
@@ -270,7 +266,7 @@ export class WhatsAppInstanceService {
         throw new Error('Usuário não autenticado')
       }
 
-      // Buscar instância no banco
+      // Buscar instância
       const { data: instance, error: dbError } = await supabase
         .from('whatsapp_instances')
         .select('*')
@@ -282,129 +278,87 @@ export class WhatsAppInstanceService {
         throw new Error('Instância não encontrada')
       }
 
-      // Deletar na Evolution API
+      // Excluir na Evolution API
       const evolutionService = new EvolutionApiService({
         baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
         apiKey: import.meta.env.VITE_EVOLUTION_API_KEY || 'your-api-key',
-        instanceName: instance.api_key || `instance_${user.id}_${instanceId}`
+        instanceName: instance.api_key || instance.name
       })
 
       try {
         await evolutionService.deleteInstance()
       } catch (evolutionError) {
-        console.error('Erro ao deletar na Evolution API:', evolutionError)
+        console.error('Erro ao excluir instância na Evolution API:', evolutionError)
       }
 
-      // Deletar do banco de dados
-      const { error: deleteError } = await supabase
+      // Excluir do banco
+      const { error } = await supabase
         .from('whatsapp_instances')
         .delete()
         .eq('id', instanceId)
-        .eq('user_id', user.id)
 
-      if (deleteError) {
-        throw new Error(`Erro ao deletar instância no banco: ${deleteError.message}`)
+      if (error) {
+        throw new Error(`Erro ao excluir instância: ${error.message}`)
       }
     } catch (error) {
-      console.error('Erro ao deletar instância:', error)
+      console.error('Erro ao excluir instância:', error)
       throw error
     }
   }
 
-  // Atualizar instância
+  // Atualizar dados da instância
   private async updateInstance(instanceId: string, updates: Partial<WhatsAppInstance>): Promise<void> {
     const { error } = await supabase
       .from('whatsapp_instances')
-      .update({ ...updates, updated_at: new Date().toISOString() })
+      .update(updates)
       .eq('id', instanceId)
 
     if (error) {
-      throw new Error(`Erro ao atualizar instância: ${error.message}`)
+      console.error('Erro ao atualizar instância:', error.message)
     }
   }
 
-  // Atualizar apenas o status
+  // Atualizar status
   private async updateInstanceStatus(instanceId: string, status: string): Promise<void> {
-    await this.updateInstance(instanceId, { 
-      status: status as any,
-      last_activity: new Date().toISOString()
-    })
+    await this.updateInstance(instanceId, { status, last_activity: new Date().toISOString() })
   }
 
-  // Mapear status da Evolution API para nosso formato
+  // Mapear status Evolution para nosso status interno
   private mapEvolutionStatus(evolutionStatus: string): 'disconnected' | 'connecting' | 'connected' | 'error' {
-    switch (evolutionStatus?.toLowerCase()) {
-      case 'open':
-      case 'connected':
-        return 'connected'
-      case 'connecting':
-      case 'qr':
-        return 'connecting'
-      case 'close':
-      case 'closed':
-      case 'disconnected':
-        return 'disconnected'
-      default:
-        return 'error'
-    }
+    const connected = new Set(['open', 'online', 'logged', 'authenticated', 'ready'])
+    const connecting = new Set(['connecting', 'qr', 'qrRead', 'qrIdle', 'loadingScreen', 'pairing', 'require_connection'])
+    const disconnected = new Set(['close', 'offline', 'timeout', 'unauthenticated', 'conflict'])
+
+    if (connected.has(evolutionStatus)) return 'connected'
+    if (connecting.has(evolutionStatus)) return 'connecting'
+    if (disconnected.has(evolutionStatus)) return 'disconnected'
+    return 'error'
   }
 
-  // Processar webhook de QR Code atualizado
+  // Atualizações vindas do webhook
   async handleQRCodeUpdate(instanceName: string, qrCode: string): Promise<void> {
-    try {
-      // Encontrar instância pelo api_key (instanceName)
-      const { data: instance, error } = await supabase
-        .from('whatsapp_instances')
-        .select('*')
-        .eq('api_key', instanceName)
-        .single()
+    const { data: instance } = await supabase
+      .from('whatsapp_instances')
+      .select('id')
+      .eq('api_key', instanceName)
+      .single()
 
-      if (error || !instance) {
-        console.error('Instância não encontrada para QR Code:', instanceName)
-        return
-      }
-
-      // Atualizar QR Code no banco
-      await this.updateInstance(instance.id, {
-        qr_code: qrCode,
-        status: 'connecting'
-      })
-
-      console.log('QR Code atualizado para instância:', instanceName)
-    } catch (error) {
-      console.error('Erro ao processar QR Code:', error)
+    if (instance?.id) {
+      await this.updateInstance(instance.id, { status: 'connecting', qr_code: qrCode })
     }
   }
 
-  // Processar webhook de conexão estabelecida
   async handleConnectionEstablished(instanceName: string, phoneNumber?: string): Promise<void> {
-    try {
-      // Encontrar instância pelo api_key (instanceName)
-      const { data: instance, error } = await supabase
-        .from('whatsapp_instances')
-        .select('*')
-        .eq('api_key', instanceName)
-        .single()
+    const { data: instance } = await supabase
+      .from('whatsapp_instances')
+      .select('id')
+      .eq('api_key', instanceName)
+      .single()
 
-      if (error || !instance) {
-        console.error('Instância não encontrada para conexão:', instanceName)
-        return
-      }
-
-      // Atualizar status e limpar QR Code
-      await this.updateInstance(instance.id, {
-        status: 'connected',
-        phone_number: phoneNumber,
-        qr_code: null,
-        last_activity: new Date().toISOString()
-      })
-
-      console.log('Conexão estabelecida para instância:', instanceName)
-    } catch (error) {
-      console.error('Erro ao processar conexão:', error)
+    if (instance?.id) {
+      await this.updateInstance(instance.id, { status: 'connected', phone_number: phoneNumber })
     }
   }
 }
 
-// Instância do serviço
 export const whatsappInstanceService = new WhatsAppInstanceService()

@@ -65,24 +65,23 @@ async function saveContact(phoneNumber: string, name: string | undefined, instan
     .from('contacts')
     .select('id')
     .eq('phone_number', phoneNumber)
-    .eq('whatsapp_instance_id', instanceId)
+    .eq('instance_id', instanceId)
     .single()
 
   if (existing) {
     if (name) {
       await supabase
         .from('contacts')
-        .update({ name, last_message_at: new Date().toISOString() })
+        .update({ name })
         .eq('id', existing.id)
     }
   } else {
     await supabase.from('contacts').insert([
       {
-        whatsapp_instance_id: instanceId,
+        instance_id: instanceId,
         user_id: userId,
         phone_number: phoneNumber,
         name: name || phoneNumber,
-        last_message_at: new Date().toISOString(),
       },
     ])
   }
@@ -94,7 +93,7 @@ async function saveMessage(messageData: any, instanceName: string) {
   const { data: instance } = await supabase
     .from('whatsapp_instances')
     .select('id, user_id')
-    .eq('name', instanceName)
+    .eq('api_key', instanceName)
     .single()
 
   if (!instance) return
@@ -105,7 +104,6 @@ async function saveMessage(messageData: any, instanceName: string) {
   const messageContent = message.message || {}
   let text = ''
   let messageType: 'text' | 'image' | 'video' | 'audio' | 'document' = 'text'
-  let mediaUrl: string | null = null
 
   if (messageContent.conversation) {
     text = messageContent.conversation
@@ -126,17 +124,16 @@ async function saveMessage(messageData: any, instanceName: string) {
 
   await supabase.from('messages').insert([
     {
-      whatsapp_instance_id: instance.id,
-      user_id: instance.user_id,
+      instance_id: instance.id,
       message_id: message.key.id,
       from_number: message.key.remoteJid,
       to_number: message.key.fromMe ? message.key.remoteJid : instanceName,
       content: text,
       message_type: messageType,
-      media_url: mediaUrl,
       is_from_me: message.key.fromMe,
       timestamp: new Date(message.messageTimestamp * 1000),
       status: 'received',
+      metadata: {}
     },
   ])
 

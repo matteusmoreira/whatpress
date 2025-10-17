@@ -29,7 +29,7 @@ export class EvolutionApiService {
     this.config = config;
   }
 
-  // Normaliza a baseUrl removendo barras à direita para evitar "//"
+  // Normaliza a baseUrl removendo barras à direita para evitar "/"
   private getBaseUrl() {
     return this.config.baseUrl.replace(/\/+$/, '');
   }
@@ -46,8 +46,8 @@ export class EvolutionApiService {
   async createInstance(): Promise<any> {
     try {
       const defaultWebhook = (typeof window !== 'undefined' && window.location.hostname === 'localhost')
-        ? 'http://localhost:3001/webhook'
-        : `${window.location.origin}/webhook`;
+        ? 'http://localhost:3001/api/webhook'
+        : `${window.location.origin}/api/webhook`;
       const webhookUrl = import.meta.env.VITE_WEBHOOK_URL || defaultWebhook;
 
       const response = await fetch(`${this.getBaseUrl()}/instance/create`, {
@@ -278,11 +278,11 @@ export class EvolutionApiService {
     }
   }
 
-  // Logout da instância
+  // Fazer logout da instância
   async logoutInstance(): Promise<any> {
     try {
       const response = await fetch(`${this.getBaseUrl()}/instance/logout/${this.config.instanceName}`, {
-        method: 'DELETE',
+        method: 'POST',
         headers: this.getHeaders(),
       });
 
@@ -298,7 +298,6 @@ export class EvolutionApiService {
   }
 }
 
-// Instância padrão do serviço (configurar com suas credenciais)
 export const evolutionApi = new EvolutionApiService({
   baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
   apiKey: import.meta.env.VITE_EVOLUTION_API_KEY || 'your-api-key',
