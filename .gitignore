@@ -33,3 +33,4 @@ coverage/
 .pnp
 .pnp.js
 .turbo/
+.vercel

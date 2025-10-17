@@ -14,18 +14,48 @@ const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE
     })
   : null
 
-function validateWebhook(payload: any, signature?: string | string[]): boolean {
-  if (!signature || !WEBHOOK_SECRET) return true
+function validateHmac(payload: any, signature?: string | string[]): boolean {
+  // If a secret is set, require a proper signature to validate HMAC
+  if (!WEBHOOK_SECRET) return true
+  if (!signature) return false
   const body = typeof payload === 'string' ? payload : JSON.stringify(payload)
   const expected = crypto.createHmac('sha256', WEBHOOK_SECRET).update(body).digest('hex')
-  return signature === `sha256=${expected}`
+  const provided = typeof signature === 'string' ? signature : ''
+  return provided === `sha256=${expected}`
+}
+
+function isAuthorized(req: VercelRequest, payload: any): boolean {
+  // When WEBHOOK_SECRET is configured, allow either:
+  // - HMAC via x-hub-signature-256
+  // - Bearer token in Authorization header
+  // - X-Webhook-Secret header matching the secret
+  if (!WEBHOOK_SECRET) return true
+  const signature = req.headers['x-hub-signature-256'] as string | undefined
+  const authHeader = (req.headers['authorization'] || '') as string
+  const bearer = authHeader.startsWith('Bearer ')
+    ? authHeader.slice('Bearer '.length)
+    : ''
+  const xSecret = (req.headers['x-webhook-secret'] || '') as string
+
+  const hmacOk = validateHmac(payload, signature)
+  const bearerOk = !!bearer && bearer === WEBHOOK_SECRET
+  const headerOk = !!xSecret && xSecret === WEBHOOK_SECRET
+
+  return hmacOk || bearerOk || headerOk
 }
 
 async function saveEvent(event: string, instance: string, data: any) {
   if (!supabase) return
-  await supabase.from('webhook_events').insert([
-    { event, instance, data, created_at: new Date().toISOString() },
-  ])
+  try {
+    const { error } = await supabase.from('webhook_events').insert([
+      { event, instance, data, created_at: new Date().toISOString() },
+    ])
+    if (error) {
+      console.error('[api/webhook] Failed to insert webhook_event:', error.message)
+    }
+  } catch (err: any) {
+    console.error('[api/webhook] Error inserting webhook_event:', err.message || err)
+  }
 }
 
 async function saveContact(phoneNumber: string, name: string | undefined, instanceId: string, userId: string) {
@@ -152,11 +182,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(405).json({ error: 'Method not allowed' })
     }
 
-    const signature = req.headers['x-hub-signature-256'] as string | undefined
     const payload = req.body
 
-    if (!validateWebhook(payload, signature)) {
-      return res.status(401).json({ error: 'Invalid signature' })
+    if (!isAuthorized(req, payload)) {
+      return res.status(401).json({ error: 'Unauthorized' })
     }
 
     const event = payload?.event

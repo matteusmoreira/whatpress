@@ -29,8 +29,15 @@ export class WhatsAppInstanceService {
         throw new Error('Usuário não autenticado')
       }
 
-      // Gerar nome único para a instância na Evolution API
-      const instanceName = `instance_${user.id}_${Date.now()}`
+      // Gerar nome único e legível para a instância na Evolution API, baseado no nome escolhido
+      const slug = data.name
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/\p{Diacritic}/gu, '') // remove acentos
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '')
+        .slice(0, 24) // evita nomes muito longos
+      const instanceName = `${slug || 'instance'}-${user.id.slice(0, 8)}-${Date.now()}`
       
       // Criar instância no banco de dados primeiro
       const { data: instance, error: dbError } = await supabase
@@ -40,7 +47,7 @@ export class WhatsAppInstanceService {
           name: data.name,
           status: 'disconnected',
           webhook_url: data.webhook_url || import.meta.env.VITE_WEBHOOK_URL || ((typeof window !== 'undefined' && window.location.hostname === 'localhost') ? 'http://localhost:3001/webhook' : `${window.location.origin}/webhook`),
-          api_key: instanceName // Usar o nome da instância como chave
+          api_key: instanceName // Usar o nome da instância como chave técnica (igual ao mostrado na Evolution)
         })
         .select()
         .single()
@@ -141,25 +148,22 @@ export class WhatsAppInstanceService {
         // Normalizar QR code se presente
         const qrBase64 = (typeof result?.qrcode === 'string' ? result.qrcode : (result?.qrcode?.base64 ?? undefined))
         if (qrBase64) {
-          const dataUri = typeof qrBase64 === 'string' && qrBase64.startsWith('data:image') ? qrBase64 : `data:image/png;base64,${qrBase64}`
+          const dataUri = qrBase64.startsWith('data:image') ? qrBase64 : `data:image/png;base64,${qrBase64}`
           await this.updateInstance(instanceId, {
-            qr_code: dataUri,
-            status: 'connecting'
+            status: 'connecting',
+            qr_code: dataUri
           })
-          
-          return {
-            qrCode: dataUri,
-            status: 'connecting'
-          }
+
+          return { qrCode: dataUri, status: 'connecting' }
         }
 
-        return {
-          status: result.state || 'connecting'
-        }
+        const status = this.mapEvolutionStatus(result?.state)
+        await this.updateInstanceStatus(instanceId, status)
+        return { status }
       } catch (evolutionError) {
-        console.error('Erro na Evolution API:', evolutionError)
+        console.error('Erro ao conectar instância na Evolution API:', evolutionError)
         await this.updateInstanceStatus(instanceId, 'error')
-        throw new Error('Erro ao conectar com Evolution API')
+        return { status: 'error' }
       }
     } catch (error) {
       console.error('Erro ao conectar instância:', error)
@@ -291,7 +295,7 @@ export class WhatsAppInstanceService {
         console.error('Erro ao deletar na Evolution API:', evolutionError)
       }
 
-      // Deletar do banco
+      // Deletar do banco de dados
       const { error: deleteError } = await supabase
         .from('whatsapp_instances')
         .delete()
@@ -299,7 +303,7 @@ export class WhatsAppInstanceService {
         .eq('user_id', user.id)
 
       if (deleteError) {
-        throw new Error(`Erro ao deletar instância: ${deleteError.message}`)
+        throw new Error(`Erro ao deletar instância no banco: ${deleteError.message}`)
       }
     } catch (error) {
       console.error('Erro ao deletar instância:', error)
@@ -311,10 +315,7 @@ export class WhatsAppInstanceService {
   private async updateInstance(instanceId: string, updates: Partial<WhatsAppInstance>): Promise<void> {
     const { error } = await supabase
       .from('whatsapp_instances')
-      .update({
-        ...updates
-        // updated_at removido para evitar erro quando a coluna não existe
-      })
+      .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', instanceId)
 
     if (error) {
