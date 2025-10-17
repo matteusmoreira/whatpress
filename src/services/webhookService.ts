@@ -65,26 +65,34 @@ class WebhookService {
   private messageHandlers: ((message: ProcessedMessage) => void)[] = [];
   private connectionHandlers: ((status: string, qr?: string) => void)[] = [];
 
-  // Processar evento do webhook
+  // Processar evento de webhook
   processWebhookEvent(event: WebhookEvent): void {
-    console.log('Processando evento webhook:', event);
-
-    switch (event.event) {
-      case 'messages.upsert':
-        this.handleMessages(event.data.messages || []);
-        break;
-      
-      case 'connection.update':
-        this.handleConnectionUpdate(event.data.connection);
-        break;
-      
-      case 'qr.updated':
-        this.handleQRUpdate(event.data.qr);
-        break;
-      
-      case 'instance.status':
-        this.handleInstanceStatus(event.data.status);
-        break;
+    console.log('🎣 Webhook recebido:', JSON.stringify(event, null, 2));
+    
+    try {
+      switch (event.event) {
+        case 'messages.upsert':
+          if (event.data.messages) {
+            this.handleMessages(event.data.messages);
+          }
+          break;
+        case 'connection.update':
+          console.log('🔗 Atualização de conexão:', event.data.connection);
+          this.handleConnectionUpdate(event.data.connection, event.instance);
+          break;
+        case 'qr.updated':
+          console.log('📱 QR Code atualizado:', event.data.qr ? 'QR recebido' : 'QR vazio');
+          this.handleQRUpdate(event.data.qr, event.instance);
+          break;
+        case 'instance.status':
+          console.log('📊 Status da instância:', event.data.status);
+          this.handleInstanceStatus(event.data.status, event.instance);
+          break;
+        default:
+          console.log('❓ Evento desconhecido:', event.event);
+      }
+    } catch (error) {
+      console.error('💥 Erro ao processar webhook:', error);
     }
   }
 
@@ -154,24 +162,53 @@ class WebhookService {
   }
 
   // Lidar com atualizações de conexão
-  private handleConnectionUpdate(connection: any): void {
-    if (connection?.state) {
-      this.notifyConnectionHandlers(connection.state);
+  private async handleConnectionUpdate(connection: any, instanceName?: string): Promise<void> {
+    console.log('🔗 Processando atualização de conexão:', connection);
+    
+    if (connection?.state && instanceName) {
+      // Importar dinamicamente para evitar dependência circular
+      const { whatsappInstanceService } = await import('./whatsappInstanceService');
+      
+      if (connection.state === 'open') {
+        console.log('✅ Conexão estabelecida via webhook');
+        await whatsappInstanceService.handleConnectionEstablished(instanceName);
+      }
     }
+    
+    this.notifyConnectionHandlers(connection?.state || 'unknown');
   }
 
-  // Lidar com atualizações de QR Code
-  private handleQRUpdate(qr?: string): void {
-    if (qr) {
-      this.notifyConnectionHandlers('qr', qr);
+  // Lidar com atualização de QR Code
+  private async handleQRUpdate(qr?: string, instanceName?: string): Promise<void> {
+    console.log('📱 Processando QR Code:', qr ? 'QR recebido' : 'QR vazio');
+    
+    if (qr && instanceName) {
+      // Importar dinamicamente para evitar dependência circular
+      const { whatsappInstanceService } = await import('./whatsappInstanceService');
+      
+      const dataUri = qr.startsWith('data:image') ? qr : `data:image/png;base64,${qr}`;
+      console.log('💾 Salvando QR Code no banco de dados');
+      await whatsappInstanceService.handleQRCodeUpdate(instanceName, dataUri);
     }
+    
+    this.notifyConnectionHandlers('connecting', qr);
   }
 
   // Lidar com status da instância
-  private handleInstanceStatus(status?: string): void {
-    if (status) {
-      this.notifyConnectionHandlers(status);
+  private async handleInstanceStatus(status?: string, instanceName?: string): Promise<void> {
+    console.log('📊 Processando status da instância:', status);
+    
+    if (status && instanceName) {
+      // Importar dinamicamente para evitar dependência circular
+      const { whatsappInstanceService } = await import('./whatsappInstanceService');
+      
+      if (status === 'open' || status === 'connected') {
+        console.log('✅ Instância conectada via webhook');
+        await whatsappInstanceService.handleConnectionEstablished(instanceName);
+      }
     }
+    
+    this.notifyConnectionHandlers(status || 'unknown');
   }
 
   // Notificar handlers de mensagem

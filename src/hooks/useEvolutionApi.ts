@@ -212,20 +212,31 @@ export function useEvolutionApi() {
       
       const targetInstanceId = instanceId || instances[0]?.id;
       if (!targetInstanceId) {
+        console.log('⚠️ Nenhuma instância disponível para verificar status');
         return;
       }
 
+      console.log(`🔍 Verificando status da instância: ${targetInstanceId}`);
       const status = await whatsappInstanceService.checkInstanceStatus(targetInstanceId);
+      console.log(`📊 Status retornado: ${status}`);
       
       setConnectionStatus({
         isConnected: status === 'connected',
         status: status as any
       });
 
-      // Recarregar instâncias
+      // Recarregar instâncias para atualizar a UI
       await loadInstances();
+      
+      // Se conectou com sucesso, mostrar toast
+      if (status === 'connected') {
+        toast({
+          title: "✅ Conectado com sucesso!",
+          description: "Sua instância WhatsApp está conectada e funcionando.",
+        });
+      }
     } catch (error: any) {
-      console.error('Erro ao verificar status:', error);
+      console.error('💥 Erro ao verificar status:', error);
       setConnectionStatus({
         isConnected: false,
         status: 'error',
@@ -234,7 +245,7 @@ export function useEvolutionApi() {
     } finally {
       setLoading(false);
     }
-  }, [instances, loadInstances]);
+  }, [instances, loadInstances, toast]);
 
   // Deletar instância
   const deleteInstance = useCallback(async (instanceId: string) => {
@@ -323,28 +334,30 @@ export function useEvolutionApi() {
     }
   }, [instances, toast]);
 
-  // Enviar mensagem
-  const sendMessage = useCallback(async (to: string, message: string) => {
+  // Enviar mensagem de texto
+  const sendMessage = useCallback(async (instanceName: string, to: string, text: string) => {
     try {
       setLoading(true);
       
-      const targetInstance = instances.find(i => i.status === 'connected') || instances[0];
-      if (!targetInstance) {
-        throw new Error('Nenhuma instância disponível para enviar mensagens');
+      // Verificar se a instância existe e está conectada
+      const instance = instances.find(inst => inst.name === instanceName);
+      if (!instance) {
+        throw new Error('Instância não encontrada');
+      }
+      
+      if (instance.status !== 'connected') {
+        throw new Error('Instância não está conectada');
       }
 
-      const service = new EvolutionApiService({
-        baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
-        apiKey: import.meta.env.VITE_EVOLUTION_API_KEY || 'your-api-key',
-        instanceName: targetInstance.api_key || targetInstance.name
-      });
-
-      await service.sendTextMessage(to, message);
+      const message = await evolutionApi.sendTextMessage(instanceName, to, text);
       
       toast({
         title: "Mensagem enviada",
-        description: "Sua mensagem foi enviada com sucesso.",
+        description: "Mensagem enviada com sucesso!",
+        variant: "default"
       });
+      
+      return message;
     } catch (error: any) {
       console.error('Erro ao enviar mensagem:', error);
       toast({
@@ -396,3 +409,81 @@ export function useEvolutionApi() {
     sendMessage
   };
 }
+
+  // Polling para atualizar status das instâncias (a cada 15 segundos para ser mais responsivo)
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    
+    const startPolling = () => {
+      interval = setInterval(async () => {
+        if (instances.length > 0 && !loading) {
+          console.log('🔄 Polling: verificando status das instâncias...');
+          
+          // Verificar status de todas as instâncias que não estão conectadas
+          const instancesToCheck = instances.filter(instance => 
+            instance.status !== 'connected' || 
+            (instance.status === 'connecting' && instance.qr_code) // Verificar instâncias conectando com QR
+          );
+          
+          if (instancesToCheck.length > 0) {
+            console.log(`📋 Verificando ${instancesToCheck.length} instâncias...`);
+            
+            // Verificar cada instância individualmente
+            for (const instance of instancesToCheck) {
+              try {
+                await checkConnectionStatus(instance.id);
+                // Pequeno delay entre verificações para não sobrecarregar a API
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              } catch (error) {
+                console.error(`❌ Erro ao verificar instância ${instance.id}:`, error);
+              }
+            }
+          } else {
+            console.log('✅ Todas as instâncias estão conectadas, polling menos frequente');
+          }
+        }
+      }, 15000); // 15 segundos
+    };
+
+    // Iniciar polling apenas se há instâncias
+    if (instances.length > 0) {
+      startPolling();
+    }
+
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, [instances, loading, checkConnectionStatus]);
+
+  // Polling mais agressivo quando há instâncias conectando (a cada 5 segundos)
+  useEffect(() => {
+    let fastInterval: NodeJS.Timeout;
+    
+    const connectingInstances = instances.filter(instance => instance.status === 'connecting');
+    
+    if (connectingInstances.length > 0) {
+      console.log(`⚡ Polling rápido ativado para ${connectingInstances.length} instâncias conectando...`);
+      
+      fastInterval = setInterval(async () => {
+        if (!loading) {
+          for (const instance of connectingInstances) {
+            try {
+              console.log(`⚡ Verificação rápida da instância: ${instance.name}`);
+              await checkConnectionStatus(instance.id);
+              await new Promise(resolve => setTimeout(resolve, 500));
+            } catch (error) {
+              console.error(`❌ Erro na verificação rápida da instância ${instance.id}:`, error);
+            }
+          }
+        }
+      }, 5000); // 5 segundos para instâncias conectando
+    }
+
+    return () => {
+      if (fastInterval) {
+        clearInterval(fastInterval);
+      }
+    };
+  }, [instances, loading, checkConnectionStatus]);

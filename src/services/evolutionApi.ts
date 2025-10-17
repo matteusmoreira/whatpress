@@ -137,6 +137,32 @@ export class EvolutionApiService {
     }
   }
 
+  // Obter informações detalhadas da instância
+  async getInstanceInfo(): Promise<any> {
+    try {
+      const response = await fetch(`${this.getBaseUrl()}/instance/fetchInstances?instanceName=${this.config.instanceName}`, {
+        method: 'GET',
+        headers: this.getHeaders(),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro ao obter informações da instância: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      // A API pode retornar um array, pegar o primeiro item se for o caso
+      if (Array.isArray(result) && result.length > 0) {
+        return result[0];
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('Erro ao obter informações da instância:', error);
+      throw error;
+    }
+  }
+
   // Enviar mensagem de texto
   async sendTextMessage(to: string, message: string): Promise<any> {
     try {

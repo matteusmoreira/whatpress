@@ -174,6 +174,8 @@ export class WhatsAppInstanceService {
   // Verificar status da instância
   async checkInstanceStatus(instanceId: string): Promise<string> {
     try {
+      console.log(`🔍 Verificando status da instância: ${instanceId}`)
+      
       const { data: { user }, error: userError } = await supabase.auth.getUser()
       if (userError || !user) {
         throw new Error('Usuário não autenticado')
@@ -188,8 +190,12 @@ export class WhatsAppInstanceService {
         .single()
 
       if (dbError || !instance) {
+        console.error('❌ Instância não encontrada no banco:', dbError?.message)
         throw new Error('Instância não encontrada')
       }
+
+      console.log(`📱 Instância encontrada: ${instance.name} (${instance.api_key})`)
+      console.log(`📊 Status atual no banco: ${instance.status}`)
 
       // Verificar status na Evolution API
       const evolutionService = new EvolutionApiService({
@@ -199,20 +205,76 @@ export class WhatsAppInstanceService {
       })
 
       try {
+        console.log(`🔗 Consultando Evolution API para instância: ${instance.api_key || instance.name}`)
         const result = await evolutionService.getInstanceStatus()
-        const status = this.mapEvolutionStatus(result.state)
+        console.log('📡 Resposta da Evolution API:', JSON.stringify(result, null, 2))
         
-        // Atualizar status no banco
-        await this.updateInstanceStatus(instanceId, status)
+        // Extrair o estado da resposta da Evolution API
+        let evolutionState = result?.state || result?.instance?.state || result?.connectionState || 'unknown'
         
-        return status
-      } catch (evolutionError) {
-        console.error('Erro ao verificar status na Evolution API:', evolutionError)
-        await this.updateInstanceStatus(instanceId, 'error')
-        return 'error'
+        // Se a resposta tem uma estrutura diferente, tentar outras propriedades
+        if (!evolutionState || evolutionState === 'unknown') {
+          evolutionState = result?.status || result?.connection?.state || result?.data?.state || 'unknown'
+        }
+        
+        console.log(`🎯 Estado extraído da Evolution API: ${evolutionState}`)
+        
+        const mappedStatus = this.mapEvolutionStatus(evolutionState)
+        console.log(`🔄 Status mapeado: ${evolutionState} → ${mappedStatus}`)
+        
+        // Se o status mudou, atualizar no banco
+        if (mappedStatus !== instance.status) {
+          console.log(`✅ Atualizando status no banco: ${instance.status} → ${mappedStatus}`)
+          await this.updateInstanceStatus(instanceId, mappedStatus)
+          
+          // Se conectou com sucesso, limpar QR code e tentar obter número do telefone
+          if (mappedStatus === 'connected') {
+            console.log('📞 Instância conectada! Tentando obter informações do telefone...')
+            try {
+              const phoneInfo = await evolutionService.getInstanceInfo()
+              const phoneNumber = phoneInfo?.instance?.owner || phoneInfo?.owner || phoneInfo?.number
+              if (phoneNumber) {
+                console.log(`📱 Número do telefone obtido: ${phoneNumber}`)
+                await this.updateInstance(instanceId, { 
+                  phone_number: phoneNumber,
+                  qr_code: null // Limpar QR code quando conectado
+                })
+              }
+            } catch (phoneError) {
+              console.warn('⚠️ Não foi possível obter informações do telefone:', phoneError)
+            }
+          }
+        } else {
+          console.log('ℹ️ Status não mudou, mantendo atual')
+        }
+        
+        return mappedStatus
+      } catch (evolutionError: any) {
+        console.error('❌ Erro ao verificar status na Evolution API:', evolutionError)
+        console.error('📋 Detalhes do erro:', {
+          message: evolutionError.message,
+          status: evolutionError.status,
+          response: evolutionError.response
+        })
+        
+        // Se o erro for 404, a instância pode não existir na Evolution API
+        if (evolutionError.message?.includes('404') || evolutionError.status === 404) {
+          console.log('🔄 Instância não encontrada na Evolution API, marcando como desconectada')
+          await this.updateInstanceStatus(instanceId, 'disconnected')
+          return 'disconnected'
+        }
+        
+        // Para outros erros, marcar como erro apenas se não estiver conectada
+        if (instance.status !== 'connected') {
+          await this.updateInstanceStatus(instanceId, 'error')
+          return 'error'
+        }
+        
+        // Se estava conectada, manter o status
+        return instance.status
       }
     } catch (error) {
-      console.error('Erro ao verificar status:', error)
+      console.error('💥 Erro geral ao verificar status:', error)
       throw error
     }
   }
@@ -325,13 +387,73 @@ export class WhatsAppInstanceService {
 
   // Mapear status Evolution para nosso status interno
   private mapEvolutionStatus(evolutionStatus: string): 'disconnected' | 'connecting' | 'connected' | 'error' {
-    const connected = new Set(['open', 'online', 'logged', 'authenticated', 'ready'])
-    const connecting = new Set(['connecting', 'qr', 'qrRead', 'qrIdle', 'loadingScreen', 'pairing', 'require_connection'])
-    const disconnected = new Set(['close', 'offline', 'timeout', 'unauthenticated', 'conflict'])
+    console.log(`🗺️ Mapeando status: "${evolutionStatus}"`)
+    
+    if (!evolutionStatus || evolutionStatus === 'unknown') {
+      console.log('❓ Status desconhecido, retornando error')
+      return 'error'
+    }
 
-    if (connected.has(evolutionStatus)) return 'connected'
-    if (connecting.has(evolutionStatus)) return 'connecting'
-    if (disconnected.has(evolutionStatus)) return 'disconnected'
+    // Normalizar o status para lowercase para comparação
+    const normalizedStatus = evolutionStatus.toLowerCase().trim()
+    
+    // Estados que indicam conexão estabelecida
+    const connectedStates = new Set([
+      'open', 
+      'online', 
+      'logged', 
+      'authenticated', 
+      'ready',
+      'connected',
+      'qr_read_success',
+      'success'
+    ])
+    
+    // Estados que indicam processo de conexão em andamento
+    const connectingStates = new Set([
+      'connecting', 
+      'qr', 
+      'qrcode',
+      'qr_read', 
+      'qr_idle', 
+      'loading_screen', 
+      'pairing', 
+      'require_connection',
+      'initializing',
+      'starting',
+      'qr_updated'
+    ])
+    
+    // Estados que indicam desconexão
+    const disconnectedStates = new Set([
+      'close', 
+      'closed',
+      'offline', 
+      'timeout', 
+      'unauthenticated', 
+      'conflict',
+      'disconnected',
+      'logout',
+      'destroyed'
+    ])
+
+    if (connectedStates.has(normalizedStatus)) {
+      console.log('✅ Status mapeado para: connected')
+      return 'connected'
+    }
+    
+    if (connectingStates.has(normalizedStatus)) {
+      console.log('🔄 Status mapeado para: connecting')
+      return 'connecting'
+    }
+    
+    if (disconnectedStates.has(normalizedStatus)) {
+      console.log('❌ Status mapeado para: disconnected')
+      return 'disconnected'
+    }
+    
+    // Se não reconheceu o status, logar para debug e retornar error
+    console.warn(`⚠️ Status não reconhecido: "${evolutionStatus}" (normalizado: "${normalizedStatus}"), retornando error`)
     return 'error'
   }
 
