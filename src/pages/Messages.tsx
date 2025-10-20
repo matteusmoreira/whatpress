@@ -50,10 +50,11 @@ import { evolutionApi } from '@/services/evolutionApi'
 import { useMessages } from '@/hooks/useMessages'
 import { MediaUpload, BulkMessageDialog } from '@/components/MediaUpload'
 import { MediaFile } from '@/hooks/useMessages'
+import { useTenant } from '@/hooks/useTenant'
 
 interface Message {
   id: string
-  whatsapp_instance_id: string
+  instance_id: string
   message_id: string
   from_number: string
   to_number: string
@@ -91,6 +92,7 @@ export default function Messages() {
   
   const { user } = useAuth()
   const { toast } = useToast()
+  const { currentTenant } = useTenant()
 
   // Auto scroll para última mensagem
   useEffect(() => {
@@ -102,30 +104,87 @@ export default function Messages() {
     if (user) {
       loadData()
     }
-  }, [user])
+  }, [user, currentTenant?.id])
 
   // Carregar mensagens e contatos
   const loadData = async () => {
     try {
       setLoading(true)
 
-      // Carregar contatos
-      const { data: contactsData, error: contactsError } = await supabase
-        .from('contacts')
-        .select('*')
-        .eq('user_id', user?.id)
-        .order('last_message_at', { ascending: false })
+      // Carregar contatos (preferir tenant)
+      let contactsData: Contact[] | null = null
+      let contactsError: any = null
+
+      if (currentTenant?.id) {
+        const { data, error } = await supabase
+          .from('contacts')
+          .select('*')
+          .eq('tenant_id', currentTenant.id)
+          .order('last_message_at', { ascending: false })
+        contactsData = data as any
+        contactsError = error
+        if (error) {
+          // Fallback para user_id (schema legado)
+          const fb = await supabase
+            .from('contacts')
+            .select('*')
+            .eq('user_id', user?.id)
+            .order('last_message_at', { ascending: false })
+          contactsData = fb.data as any
+          contactsError = fb.error
+        }
+      } else {
+        const { data, error } = await supabase
+          .from('contacts')
+          .select('*')
+          .eq('user_id', user?.id)
+          .order('last_message_at', { ascending: false })
+        contactsData = data as any
+        contactsError = error
+      }
 
       if (contactsError) throw contactsError
 
-      // Carregar mensagens
-      const { data: messagesData, error: messagesError } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('user_id', user?.id)
-        .order('timestamp', { ascending: true })
+      // Obter instâncias do tenant/usuário
+      let instanceIds: string[] = []
+      if (currentTenant?.id) {
+        const { data: instData, error: instError } = await supabase
+          .from('whatsapp_instances')
+          .select('id')
+          .eq('tenant_id', currentTenant.id)
+        if (instError) {
+          // Fallback para user_id
+          const fb = await supabase
+            .from('whatsapp_instances')
+            .select('id')
+            .eq('user_id', user?.id)
+          if (fb.error) throw fb.error
+          instanceIds = (fb.data || []).map((r: any) => r.id)
+        } else {
+          instanceIds = (instData || []).map((r: any) => r.id)
+        }
+      } else {
+        const { data: instData, error: instError } = await supabase
+          .from('whatsapp_instances')
+          .select('id')
+          .eq('user_id', user?.id)
+        if (instError) throw instError
+        instanceIds = (instData || []).map((r: any) => r.id)
+      }
 
-      if (messagesError) throw messagesError
+      // Carregar mensagens apenas das instâncias do tenant/usuário
+      let messagesData: Message[] | null = []
+      if (instanceIds.length > 0) {
+        const { data, error } = await supabase
+          .from('messages')
+          .select('*')
+          .in('instance_id', instanceIds)
+          .order('timestamp', { ascending: true })
+        if (error) throw error
+        messagesData = data as any
+      } else {
+        messagesData = []
+      }
 
       setContacts(contactsData || [])
       setMessages(messagesData || [])
@@ -196,17 +255,40 @@ export default function Messages() {
     try {
       setSending(true)
 
-      // Buscar instância ativa do usuário
-      const { data: instances, error: instanceError } = await supabase
-        .from('whatsapp_instances')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('status', 'connected')
-        .limit(1)
+      // Buscar instância ativa (preferir tenant)
+      let instance: any = null
+      if (currentTenant?.id) {
+        const { data: instances, error: instanceError } = await supabase
+          .from('whatsapp_instances')
+          .select('*')
+          .eq('tenant_id', currentTenant.id)
+          .eq('status', 'connected')
+          .limit(1)
 
-      if (instanceError) throw instanceError
+        if (instanceError) {
+          const fb = await supabase
+            .from('whatsapp_instances')
+            .select('*')
+            .eq('user_id', user.id)
+            .eq('status', 'connected')
+            .limit(1)
+          if (fb.error) throw fb.error
+          instance = fb.data?.[0]
+        } else {
+          instance = instances?.[0]
+        }
+      } else {
+        const { data: instances, error: instanceError } = await supabase
+          .from('whatsapp_instances')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('status', 'connected')
+          .limit(1)
+        if (instanceError) throw instanceError
+        instance = instances?.[0]
+      }
 
-      if (!instances || instances.length === 0) {
+      if (!instance) {
         toast({
           title: "Nenhuma instância conectada",
           description: "Conecte uma instância do WhatsApp primeiro",
@@ -214,8 +296,6 @@ export default function Messages() {
         })
         return
       }
-
-      const instance = instances[0]
 
       // Enviar mensagem via Evolution API
       const response = await fetch(`${import.meta.env.VITE_EVOLUTION_API_URL}/message/sendText/${instance.api_key}`, {
@@ -239,10 +319,9 @@ export default function Messages() {
         .from('messages')
         .insert([
           {
-            whatsapp_instance_id: instance.id,
-            user_id: user.id,
+            instance_id: instance.id,
             message_id: `sent_${Date.now()}`,
-            from_number: instance.name,
+            from_number: instance.phone_number || instance.name,
             to_number: selectedContact,
             content: messageText,
             message_type: 'text',

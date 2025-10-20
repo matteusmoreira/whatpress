@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
+import { useTenant } from '@/hooks/useTenant'
 
 // Interface usada no frontend. Mantém compatibilidade com CreateCampaign.tsx
 export interface Contact {
@@ -27,6 +28,7 @@ interface UseContactsResult {
 
 export function useContacts(): UseContactsResult {
   const { user } = useAuth()
+  const { currentTenant } = useTenant()
   const [contacts, setContacts] = useState<Contact[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
@@ -42,16 +44,41 @@ export function useContacts(): UseContactsResult {
       setLoading(true)
       setError(null)
 
-      // Buscar contatos do usuário
-      const { data, error } = await supabase
-        .from('contacts')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
+      // Buscar contatos do tenant quando disponível; fallback para user_id em schema legado
+      let resultData: any[] = []
 
-      if (error) throw error
+      // Tentativa preferencial: filtrando por tenant_id
+      if (currentTenant?.id) {
+        const { data, error } = await supabase
+          .from('contacts')
+          .select('*')
+          .eq('tenant_id', currentTenant.id)
+          .order('created_at', { ascending: false })
 
-      const mapped: Contact[] = (data || []).map((c: any) => ({
+        if (error) {
+          // Fallback seguro para esquemas sem coluna tenant_id
+          const fallback = await supabase
+            .from('contacts')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+          if (fallback.error) throw fallback.error
+          resultData = fallback.data || []
+        } else {
+          resultData = data || []
+        }
+      } else {
+        // Sem tenant ativo, usar filtro por usuário
+        const { data, error } = await supabase
+          .from('contacts')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+        if (error) throw error
+        resultData = data || []
+      }
+
+      const mapped: Contact[] = resultData.map((c: any) => ({
         id: c.id,
         user_id: c.user_id,
         instance_id: c.instance_id,
@@ -79,7 +106,7 @@ export function useContacts(): UseContactsResult {
   useEffect(() => {
     fetchContacts()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id])
+  }, [user?.id, currentTenant?.id])
 
   return { contacts, loading, error, refresh: fetchContacts }
 }

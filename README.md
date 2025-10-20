@@ -29,6 +29,9 @@ Servidor (não expostas no cliente):
 - `SUPABASE_SERVICE_ROLE`
 - `WEBHOOK_SECRET` (opcional para validar assinaturas)
 
+Frontend (opcional – apenas para desenvolvimento):
+- `VITE_WEBHOOK_SECRET` (se definido, será enviado como cabeçalho `x-webhook-secret` na configuração do webhook ao criar a instância; não use em produção)
+
 > Importante: `.env` está ignorado pelo `.gitignore`. Jamais comitar `SUPABASE_SERVICE_ROLE`.
 
 ## Desenvolvimento local
@@ -36,6 +39,8 @@ Servidor (não expostas no cliente):
 2. Rodar frontend: `npm run dev` (Vite)
 3. Rodar webhook: `npm run webhook` (Express em `http://localhost:3001`)
 4. Healthcheck webhook: `GET http://localhost:3001/health`
+
+No cadastro de instância, em ambiente local, o webhook padrão é `http://localhost:3001/webhook`. Em produção, o padrão é `${window.location.origin}/api/webhook` (função serverless `api/webhook.ts`).
 
 ## Webhook
 O arquivo `webhook-server.js`:

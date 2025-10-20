@@ -28,7 +28,12 @@ import {
   Trash2,
   BarChart3,
   Zap,
-  Loader2
+  Loader2,
+  Settings,
+  Activity,
+  Gauge,
+  Shuffle,
+  Network
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -55,6 +60,11 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { useCampaigns } from '@/hooks/useCampaigns'
+import { useCampaignEngine } from '@/hooks/useCampaignEngine'
+import { CampaignEngine } from '@/components/CampaignEngine'
+import { MultiSessionManager } from '@/components/MultiSessionManager'
+import { RandomizationSettings } from '@/components/RandomizationSettings'
+import { RateLimitConfigComponent } from '@/components/RateLimitConfig'
 
 export default function Campaigns() {
   const navigate = useNavigate()
@@ -62,12 +72,11 @@ export default function Campaigns() {
     campaigns, 
     stats, 
     loading, 
-    startCampaign, 
-    pauseCampaign, 
-    stopCampaign, 
     deleteCampaign,
     duplicateCampaign 
   } = useCampaigns()
+  
+  const { metrics, startCampaign, pauseCampaign, resumeCampaign, stopCampaign } = useCampaignEngine()
   
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
@@ -125,7 +134,7 @@ export default function Campaigns() {
     }
   }
 
-  const handleAction = async (action: () => Promise<void>, campaignId: string) => {
+  const handleAction = async (action: () => Promise<any>, campaignId: string) => {
     try {
       setActionLoading(campaignId)
       await action()
@@ -169,8 +178,8 @@ export default function Campaigns() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Campanhas</h1>
-          <p className="text-muted-foreground">Gerencie suas campanhas de WhatsApp</p>
+          <h1 className="text-3xl font-bold text-foreground">Campanhas Inteligentes</h1>
+          <p className="text-muted-foreground">Sistema avançado de campanhas com multi-sessão e randomização</p>
         </div>
         <div className="flex items-center gap-3">
           <Button variant="outline" className="gap-2" onClick={() => navigate('/dashboard/analytics')}>
@@ -253,14 +262,35 @@ export default function Campaigns() {
         </Card>
       </div>
 
-      <Tabs defaultValue="list" className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="list">Lista de Campanhas</TabsTrigger>
-          <TabsTrigger value="templates">Templates</TabsTrigger>
-          <TabsTrigger value="automation">Automação</TabsTrigger>
+      <Tabs defaultValue="campaigns" className="space-y-6">
+        <TabsList className="grid w-full grid-cols-6">
+          <TabsTrigger value="campaigns" className="flex items-center gap-2">
+            <Send className="h-4 w-4" />
+            Campanhas
+          </TabsTrigger>
+          <TabsTrigger value="engine" className="flex items-center gap-2">
+            <Activity className="h-4 w-4" />
+            Motor
+          </TabsTrigger>
+          <TabsTrigger value="sessions" className="flex items-center gap-2">
+            <Network className="h-4 w-4" />
+            Multi-Sessão
+          </TabsTrigger>
+          <TabsTrigger value="randomization" className="flex items-center gap-2">
+            <Shuffle className="h-4 w-4" />
+            Randomização
+          </TabsTrigger>
+          <TabsTrigger value="ratelimit" className="flex items-center gap-2">
+            <Gauge className="h-4 w-4" />
+            Rate Limit
+          </TabsTrigger>
+          <TabsTrigger value="automation" className="flex items-center gap-2">
+            <Zap className="h-4 w-4" />
+            Automação
+          </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="list" className="space-y-6">
+        <TabsContent value="campaigns" className="space-y-6">
           {/* Filters and Search */}
           <Card>
             <CardContent className="p-6">
@@ -385,7 +415,7 @@ export default function Campaigns() {
                           {campaign.status === 'paused' && (
                             <DropdownMenuItem 
                               className="gap-2"
-                              onClick={() => handleAction(() => startCampaign(campaign.id), campaign.id)}
+                              onClick={() => handleAction(() => resumeCampaign(campaign.id), campaign.id)}
                             >
                               <Play className="h-4 w-4" />
                               Retomar
@@ -400,9 +430,9 @@ export default function Campaigns() {
                               Iniciar
                             </DropdownMenuItem>
                           )}
-                          {['running', 'paused', 'scheduled'].includes(campaign.status) && (
+                          {campaign.status === 'running' && (
                             <DropdownMenuItem 
-                              className="gap-2"
+                              className="gap-2 text-red-600"
                               onClick={() => handleAction(() => stopCampaign(campaign.id), campaign.id)}
                             >
                               <Square className="h-4 w-4" />
@@ -424,42 +454,21 @@ export default function Campaigns() {
                       </DropdownMenu>
                     </div>
 
-                    {/* Progress and Stats */}
-                    <div className="space-y-4">
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-medium">Progresso da Campanha</span>
-                          <span className="text-sm text-muted-foreground">{campaign.progress || 0}%</span>
+                    {/* Progress Bar for Running Campaigns */}
+                    {campaign.status === 'running' && (
+                      <div className="mt-4">
+                        <div className="flex justify-between text-sm text-muted-foreground mb-2">
+                          <span>Progresso</span>
+                          <span>{metrics[campaign.id]?.messages_sent || 0} / {metrics[campaign.id]?.total_messages || 0}</span>
                         </div>
-                        <Progress value={campaign.progress || 0} className="h-2" />
+                        <Progress 
+                          value={campaign.total_contacts ? 
+                            ((metrics[campaign.id]?.messages_sent || 0) / (metrics[campaign.id]?.total_messages || 1)) * 100 : 0
+                          } 
+                          className="h-2" 
+                        />
                       </div>
-
-                      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 text-center">
-                        <div className="p-3 bg-muted/50 rounded-lg">
-                          <p className="text-lg font-bold text-foreground">{campaign.sent || 0}</p>
-                          <p className="text-xs text-muted-foreground">Enviadas</p>
-                        </div>
-                        <div className="p-3 bg-muted/50 rounded-lg">
-                          <p className="text-lg font-bold text-green-600">{campaign.delivered || 0}</p>
-                          <p className="text-xs text-muted-foreground">Entregues</p>
-                        </div>
-                        <div className="p-3 bg-muted/50 rounded-lg">
-                          <p className="text-lg font-bold text-blue-600">{campaign.read || 0}</p>
-                          <p className="text-xs text-muted-foreground">Lidas</p>
-                        </div>
-                        <div className="p-3 bg-muted/50 rounded-lg">
-                          <p className="text-lg font-bold text-purple-600">{campaign.replied || 0}</p>
-                          <p className="text-xs text-muted-foreground">Respostas</p>
-                        </div>
-                        <div className="p-3 bg-muted/50 rounded-lg">
-                          <p className="text-lg font-bold text-primary">
-                            {campaign.delivered && campaign.delivered > 0 ? 
-                              ((campaign.replied || 0) / campaign.delivered * 100).toFixed(1) : 0}%
-                          </p>
-                          <p className="text-xs text-muted-foreground">Taxa Resposta</p>
-                        </div>
-                      </div>
-                    </div>
+                    )}
                   </CardContent>
                 </Card>
               ))
@@ -467,39 +476,40 @@ export default function Campaigns() {
           </div>
         </TabsContent>
 
-        <TabsContent value="templates" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Templates de Mensagem</CardTitle>
-              <CardDescription>Crie e gerencie templates reutilizáveis</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-center py-12">
-                <MessageSquare className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-semibold mb-2">Templates Inteligentes</h3>
-                <p className="text-muted-foreground mb-4">Funcionalidade será implementada na próxima fase</p>
-                <Button variant="outline" onClick={() => navigate('/dashboard/templates')}>
-                  Ir para Templates
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+        <TabsContent value="engine" className="space-y-6">
+          <CampaignEngine />
+        </TabsContent>
+
+        <TabsContent value="sessions" className="space-y-6">
+          <MultiSessionManager />
+        </TabsContent>
+
+        <TabsContent value="randomization" className="space-y-6">
+          <RandomizationSettings />
+        </TabsContent>
+
+        <TabsContent value="ratelimit" className="space-y-6">
+          <RateLimitConfigComponent />
         </TabsContent>
 
         <TabsContent value="automation" className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Automação de Campanhas</CardTitle>
-              <CardDescription>Configure fluxos automatizados de mensagens</CardDescription>
+              <CardTitle className="flex items-center gap-2">
+                <Zap className="h-5 w-5" />
+                Automação Avançada
+              </CardTitle>
+              <CardDescription>
+                Configure regras de automação inteligente para suas campanhas
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="text-center py-12">
-                <Zap className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-semibold mb-2">Automação Inteligente</h3>
-                <p className="text-muted-foreground mb-4">Funcionalidade será implementada na próxima fase</p>
-                <Button variant="outline" onClick={() => navigate('/dashboard/automation')}>
-                  Ir para Automação
-                </Button>
+                <Settings className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-semibold mb-2">Funcionalidade em Desenvolvimento</h3>
+                <p className="text-muted-foreground">
+                  Sistema de automação avançada será implementado em breve
+                </p>
               </div>
             </CardContent>
           </Card>
@@ -523,13 +533,9 @@ export default function Campaigns() {
               disabled={!!actionLoading}
             >
               {actionLoading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  Excluindo...
-                </>
-              ) : (
-                'Excluir'
-              )}
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : null}
+              Excluir
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

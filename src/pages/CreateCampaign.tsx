@@ -36,7 +36,11 @@ import {
   MapPin,
   Phone,
   Mail,
-  Sparkles
+  Sparkles,
+  Settings,
+  Network,
+  Shuffle,
+  Gauge
 } from 'lucide-react'
 import {
   Select,
@@ -50,6 +54,9 @@ import { Progress } from '@/components/ui/progress'
 import { useCampaigns } from '@/hooks/useCampaigns'
 import { useContacts } from '@/hooks/useContacts'
 import { useTemplates } from '@/hooks/useTemplates'
+import { useMultiSession } from '@/hooks/useMultiSession'
+import { useRandomization } from '@/hooks/useRandomization'
+import { useRateLimit } from '@/hooks/useRateLimit'
 
 interface CampaignFormData {
   name: string
@@ -63,6 +70,27 @@ interface CampaignFormData {
     location?: string
     age_range?: { min: number; max: number }
     last_interaction?: string
+  }
+  // Configurações avançadas
+  multi_session_config?: {
+    enabled: boolean
+    load_balancing_strategy: 'least_loaded' | 'priority_based' | 'round_robin' | 'random'
+    max_retries: number
+    failover_enabled: boolean
+  }
+  randomization_config?: {
+    enabled: boolean
+    profile_id?: string
+    delay_variance: number
+    template_rotation: boolean
+    human_simulation: boolean
+  }
+  rate_limit_config?: {
+    enabled: boolean
+    config_id?: string
+    messages_per_minute: number
+    burst_control: boolean
+    adaptive_rate: boolean
   }
 }
 
@@ -79,6 +107,9 @@ export default function CreateCampaign() {
   const { createCampaign, loading: campaignLoading } = useCampaigns()
   const { contacts, loading: contactsLoading } = useContacts()
   const { templates, loading: templatesLoading } = useTemplates()
+  const { instances, loadBalancingConfig } = useMultiSession()
+  const { profiles: randomizationProfiles, activeProfile } = useRandomization()
+  const { configs: rateLimitConfigs, activeConfigs } = useRateLimit()
   
   const [formData, setFormData] = useState<CampaignFormData>({
     name: '',
@@ -86,7 +117,28 @@ export default function CreateCampaign() {
     message: '',
     scheduled_at: '',
     target_contacts: [],
-    segmentation: {}
+    segmentation: {},
+    // Configurações padrão avançadas
+    multi_session_config: {
+      enabled: true,
+      load_balancing_strategy: 'least_loaded',
+      max_retries: 3,
+      failover_enabled: true
+    },
+    randomization_config: {
+      enabled: true,
+      profile_id: activeProfile?.id,
+      delay_variance: 30,
+      template_rotation: true,
+      human_simulation: true
+    },
+    rate_limit_config: {
+      enabled: true,
+      config_id: activeConfigs[0]?.id,
+      messages_per_minute: 10,
+      burst_control: true,
+      adaptive_rate: true
+    }
   })
   
   const [selectedContacts, setSelectedContacts] = useState<string[]>([])
@@ -284,8 +336,9 @@ export default function CreateCampaign() {
       1: 'Informações Básicas',
       2: 'Seleção de Público',
       3: 'Mensagem e Template',
-      4: 'Agendamento',
-      5: 'Revisão e Envio'
+      4: 'Configurações Avançadas',
+      5: 'Agendamento',
+      6: 'Revisão e Envio'
     }
     return titles[step as keyof typeof titles]
   }
@@ -307,8 +360,8 @@ export default function CreateCampaign() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
-            <h1 className="text-3xl font-bold text-foreground">Nova Campanha</h1>
-            <p className="text-muted-foreground">Crie uma nova campanha de WhatsApp</p>
+            <h1 className="text-3xl font-bold text-foreground">Nova Campanha Inteligente</h1>
+            <p className="text-muted-foreground">Crie uma campanha com multi-sessão e randomização avançada</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -328,10 +381,10 @@ export default function CreateCampaign() {
         <CardContent className="p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold">Progresso da Criação</h3>
-            <span className="text-sm text-muted-foreground">Passo {currentStep} de 5</span>
+            <span className="text-sm text-muted-foreground">Passo {currentStep} de 6</span>
           </div>
           <div className="flex items-center justify-between mb-4">
-            {[1, 2, 3, 4, 5].map((step, index) => (
+            {[1, 2, 3, 4, 5, 6].map((step, index) => (
               <div key={step} className="flex items-center">
                 <div className="flex flex-col items-center">
                   {getStepIcon(step)}
@@ -339,13 +392,13 @@ export default function CreateCampaign() {
                     {getStepTitle(step)}
                   </span>
                 </div>
-                {index < 4 && (
+                {index < 5 && (
                   <div className={`h-0.5 w-16 mx-2 ${currentStep > step ? 'bg-green-600' : 'bg-muted'}`} />
                 )}
               </div>
             ))}
           </div>
-          <Progress value={(currentStep / 5) * 100} className="h-2" />
+          <Progress value={(currentStep / 6) * 100} className="h-2" />
         </CardContent>
       </Card>
 
@@ -353,12 +406,13 @@ export default function CreateCampaign() {
         {/* Main Content */}
         <div className="lg:col-span-2 space-y-6">
           <Tabs value={currentStep.toString()} onValueChange={(value) => setCurrentStep(parseInt(value))}>
-            <TabsList className="grid w-full grid-cols-5">
+            <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="1">Básico</TabsTrigger>
               <TabsTrigger value="2">Público</TabsTrigger>
               <TabsTrigger value="3">Mensagem</TabsTrigger>
-              <TabsTrigger value="4">Agenda</TabsTrigger>
-              <TabsTrigger value="5">Revisão</TabsTrigger>
+              <TabsTrigger value="4">Avançado</TabsTrigger>
+              <TabsTrigger value="5">Agenda</TabsTrigger>
+              <TabsTrigger value="6">Revisão</TabsTrigger>
             </TabsList>
 
             {/* Passo 1: Informações Básicas */}
@@ -401,350 +455,394 @@ export default function CreateCampaign() {
                       rows={3}
                     />
                   </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
 
-            {/* Passo 2: Seleção de Público */}
-            <TabsContent value="2" className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Users className="h-5 w-5" />
-                    Seleção de Público-Alvo
-                  </CardTitle>
-                  <CardDescription>
-                    Escolha os contatos que receberão a campanha
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  {/* Modo de Segmentação */}
-                  <div className="flex items-center gap-4">
-                    <Button
-                      variant={segmentationMode === 'manual' ? 'default' : 'outline'}
-                      onClick={() => setSegmentationMode('manual')}
-                      className="gap-2"
-                    >
-                      <UserCheck className="h-4 w-4" />
-                      Seleção Manual
-                    </Button>
-                    <Button
-                      variant={segmentationMode === 'smart' ? 'default' : 'outline'}
-                      onClick={() => {
-                        setSegmentationMode('smart')
-                        generateSmartSegments()
-                      }}
-                      className="gap-2"
-                    >
-                      <Sparkles className="h-4 w-4" />
-                      Segmentação Inteligente
+                  <div className="flex items-center justify-end">
+                    <Button onClick={() => setCurrentStep(2)}>
+                      Próximo: Selecionar Público
+                      <ArrowLeft className="h-4 w-4 ml-2 rotate-180" />
                     </Button>
                   </div>
-
-                  {segmentationMode === 'smart' ? (
-                    /* Segmentação Inteligente */
-                    <div className="space-y-4">
-                      <h4 className="font-medium">Segmentos Sugeridos</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {smartSegments.map((segment) => (
-                          <Card 
-                            key={segment.id} 
-                            className="cursor-pointer hover:shadow-md transition-shadow"
-                            onClick={() => handleSegmentSelect(segment)}
-                          >
-                            <CardContent className="p-4">
-                              <div className="flex items-center justify-between mb-2">
-                                <h5 className="font-medium">{segment.name}</h5>
-                                <Badge variant="secondary">{segment.count}</Badge>
-                              </div>
-                              <p className="text-sm text-muted-foreground">{segment.description}</p>
-                              <Button 
-                                size="sm" 
-                                className="w-full mt-3"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleSegmentSelect(segment)
-                                }}
-                              >
-                                Selecionar Segmento
-                              </Button>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    /* Seleção Manual */
-                    <div className="space-y-4">
-                      {/* Filtros */}
-                      <div className="flex flex-col lg:flex-row gap-4">
-                        <div className="relative flex-1">
-                          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                          <Input
-                            placeholder="Buscar contatos..."
-                            value={contactFilter}
-                            onChange={(e) => setContactFilter(e.target.value)}
-                            className="pl-10"
-                          />
-                        </div>
-                        <Select value={locationFilter} onValueChange={setLocationFilter}>
-                          <SelectTrigger className="w-full lg:w-48">
-                            <SelectValue placeholder="Localização" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="">Todas</SelectItem>
-                            <SelectItem value="São Paulo">São Paulo</SelectItem>
-                            <SelectItem value="Rio de Janeiro">Rio de Janeiro</SelectItem>
-                            <SelectItem value="Belo Horizonte">Belo Horizonte</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {/* Ações em Massa */}
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Checkbox
-                            checked={selectedContacts.length === filteredContacts.length && filteredContacts.length > 0}
-                            onCheckedChange={handleSelectAllContacts}
-                          />
-                          <span className="text-sm">
-                            Selecionar todos ({filteredContacts.length})
-                          </span>
-                        </div>
-                        <Badge variant="secondary">
-                          {selectedContacts.length} selecionados
-                        </Badge>
-                      </div>
-
-                      {/* Lista de Contatos */}
-                      <div className="max-h-96 overflow-y-auto space-y-2">
-                        {filteredContacts.map((contact) => (
-                          <div
-                            key={contact.id}
-                            className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50"
-                          >
-                            <div className="flex items-center gap-3">
-                              <Checkbox
-                                checked={selectedContacts.includes(contact.id)}
-                                onCheckedChange={() => handleContactToggle(contact.id)}
-                              />
-                              <div>
-                                <p className="font-medium">{contact.name}</p>
-                                <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                                  <span className="flex items-center gap-1">
-                                    <Phone className="h-3 w-3" />
-                                    {contact.phone}
-                                  </span>
-                                  {contact.location && (
-                                    <span className="flex items-center gap-1">
-                                      <MapPin className="h-3 w-3" />
-                                      {contact.location}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              {contact.tags?.map((tag) => (
-                                <Badge key={tag} variant="outline" className="text-xs">
-                                  {tag}
-                                </Badge>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {errors.contacts && (
-                    <p className="text-sm text-red-600 flex items-center gap-1">
-                      <AlertCircle className="h-4 w-4" />
-                      {errors.contacts}
-                    </p>
-                  )}
                 </CardContent>
               </Card>
             </TabsContent>
 
-            {/* Passo 3: Mensagem e Template */}
-            <TabsContent value="3" className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <MessageSquare className="h-5 w-5" />
-                    Mensagem da Campanha
-                  </CardTitle>
-                  <CardDescription>
-                    Escreva sua mensagem ou use um template
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {/* Seleção de Template */}
-                  <div className="space-y-2">
-                    <Label>Template (Opcional)</Label>
-                    <Select value={formData.template_id || ''} onValueChange={handleTemplateSelect}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Escolha um template..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {templates.map((template) => (
-                          <SelectItem key={template.id} value={template.id}>
-                            {template.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Editor de Mensagem */}
-                  <div className="space-y-2">
-                    <Label htmlFor="message">Mensagem *</Label>
-                    <Textarea
-                      id="message"
-                      placeholder="Digite sua mensagem aqui..."
-                      value={formData.message}
-                      onChange={(e) => handleInputChange('message', e.target.value)}
-                      rows={8}
-                      className={errors.message ? 'border-red-500' : ''}
-                    />
-                    {errors.message && (
-                      <p className="text-sm text-red-600 flex items-center gap-1">
-                        <AlertCircle className="h-4 w-4" />
-                        {errors.message}
-                      </p>
-                    )}
-                    <p className="text-sm text-muted-foreground">
-                      Use variáveis como {'{nome}'}, {'{empresa}'} para personalizar
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Passo 4: Agendamento */}
+            {/* Passo 4: Configurações Avançadas */}
             <TabsContent value="4" className="space-y-6">
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Calendar className="h-5 w-5" />
-                    Agendamento da Campanha
+                    <Settings className="h-5 w-5" />
+                    Configurações Avançadas
                   </CardTitle>
                   <CardDescription>
-                    Defina quando a campanha será enviada
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>Agendar Envio</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Ative para programar o envio da campanha
-                      </p>
-                    </div>
-                    <Switch
-                      checked={scheduleEnabled}
-                      onCheckedChange={setScheduleEnabled}
-                    />
-                  </div>
-
-                  {scheduleEnabled && (
-                    <div className="space-y-2">
-                      <Label htmlFor="scheduled_at">Data e Hora do Envio *</Label>
-                      <Input
-                        id="scheduled_at"
-                        type="datetime-local"
-                        value={formData.scheduled_at}
-                        onChange={(e) => handleInputChange('scheduled_at', e.target.value)}
-                        className={errors.scheduled_at ? 'border-red-500' : ''}
-                        min={new Date().toISOString().slice(0, 16)}
-                      />
-                      {errors.scheduled_at && (
-                        <p className="text-sm text-red-600 flex items-center gap-1">
-                          <AlertCircle className="h-4 w-4" />
-                          {errors.scheduled_at}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Passo 5: Revisão */}
-            <TabsContent value="5" className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <CheckCircle className="h-5 w-5" />
-                    Revisão da Campanha
-                  </CardTitle>
-                  <CardDescription>
-                    Revise todos os detalhes antes de criar a campanha
+                    Configure multi-sessão, randomização e rate limiting
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                      <div>
-                        <h4 className="font-medium mb-2">Informações Básicas</h4>
-                        <div className="space-y-2 text-sm">
-                          <p><strong>Nome:</strong> {formData.name || 'Não definido'}</p>
-                          <p><strong>Descrição:</strong> {formData.description || 'Nenhuma'}</p>
+                  {/* Multi-Sessão */}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Network className="h-5 w-5 text-blue-600" />
+                        <div>
+                          <Label className="text-base font-medium">Multi-Sessão WhatsApp</Label>
+                          <p className="text-sm text-muted-foreground">
+                            Distribua mensagens entre múltiplas instâncias
+                          </p>
                         </div>
                       </div>
-                      
-                      <div>
-                        <h4 className="font-medium mb-2">Público-Alvo</h4>
-                        <div className="space-y-2 text-sm">
-                          <p><strong>Contatos selecionados:</strong> {selectedContacts.length}</p>
-                          <p><strong>Modo:</strong> {segmentationMode === 'smart' ? 'Segmentação Inteligente' : 'Seleção Manual'}</p>
-                        </div>
-                      </div>
+                      <Switch
+                        checked={formData.multi_session_config?.enabled}
+                        onCheckedChange={(checked) => 
+                          setFormData(prev => ({
+                            ...prev,
+                            multi_session_config: {
+                              ...prev.multi_session_config!,
+                              enabled: checked
+                            }
+                          }))
+                        }
+                      />
                     </div>
-                    
-                    <div className="space-y-4">
-                      <div>
-                        <h4 className="font-medium mb-2">Agendamento</h4>
-                        <div className="space-y-2 text-sm">
-                          <p><strong>Tipo:</strong> {scheduleEnabled ? 'Agendada' : 'Envio Imediato'}</p>
-                          {scheduleEnabled && (
-                            <p><strong>Data/Hora:</strong> {formData.scheduled_at ? new Date(formData.scheduled_at).toLocaleString('pt-BR') : 'Não definida'}</p>
-                          )}
+
+                    {formData.multi_session_config?.enabled && (
+                      <div className="ml-7 space-y-4 p-4 bg-muted/50 rounded-lg">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label>Estratégia de Balanceamento</Label>
+                            <Select
+                              value={formData.multi_session_config.load_balancing_strategy}
+                              onValueChange={(value: any) =>
+                                setFormData(prev => ({
+                                  ...prev,
+                                  multi_session_config: {
+                                    ...prev.multi_session_config!,
+                                    load_balancing_strategy: value
+                                  }
+                                }))
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="least_loaded">Menos Carregada</SelectItem>
+                                <SelectItem value="priority_based">Por Prioridade</SelectItem>
+                                <SelectItem value="round_robin">Round Robin</SelectItem>
+                                <SelectItem value="random">Aleatória</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label>Máximo de Tentativas</Label>
+                            <Input
+                              type="number"
+                              min="1"
+                              max="10"
+                              value={formData.multi_session_config.max_retries}
+                              onChange={(e) =>
+                                setFormData(prev => ({
+                                  ...prev,
+                                  multi_session_config: {
+                                    ...prev.multi_session_config!,
+                                    max_retries: parseInt(e.target.value)
+                                  }
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <Label>Failover Automático</Label>
+                            <p className="text-sm text-muted-foreground">
+                              Redirecionar mensagens se uma instância falhar
+                            </p>
+                          </div>
+                          <Switch
+                            checked={formData.multi_session_config.failover_enabled}
+                            onCheckedChange={(checked) =>
+                              setFormData(prev => ({
+                                ...prev,
+                                multi_session_config: {
+                                  ...prev.multi_session_config!,
+                                  failover_enabled: checked
+                                }
+                              }))
+                            }
+                          />
+                        </div>
+
+                        <div className="text-sm text-muted-foreground">
+                          <strong>{instances.filter(i => i.status === 'connected').length}</strong> instâncias ativas disponíveis
                         </div>
                       </div>
-                    </div>
+                    )}
                   </div>
 
-                  <div>
-                    <h4 className="font-medium mb-2">Prévia da Mensagem</h4>
-                    <div className="p-4 bg-muted rounded-lg">
-                      <p className="whitespace-pre-wrap">{formData.message || 'Nenhuma mensagem definida'}</p>
+                  <Separator />
+
+                  {/* Randomização */}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Shuffle className="h-5 w-5 text-purple-600" />
+                        <div>
+                          <Label className="text-base font-medium">Sistema de Randomização</Label>
+                          <p className="text-sm text-muted-foreground">
+                            Simule comportamento humano e evite detecção
+                          </p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={formData.randomization_config?.enabled}
+                        onCheckedChange={(checked) =>
+                          setFormData(prev => ({
+                            ...prev,
+                            randomization_config: {
+                              ...prev.randomization_config!,
+                              enabled: checked
+                            }
+                          }))
+                        }
+                      />
                     </div>
+
+                    {formData.randomization_config?.enabled && (
+                      <div className="ml-7 space-y-4 p-4 bg-muted/50 rounded-lg">
+                        <div className="space-y-2">
+                          <Label>Perfil de Randomização</Label>
+                          <Select
+                            value={formData.randomization_config.profile_id || ''}
+                            onValueChange={(value) =>
+                              setFormData(prev => ({
+                                ...prev,
+                                randomization_config: {
+                                  ...prev.randomization_config!,
+                                  profile_id: value
+                                }
+                              }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Selecione um perfil" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {randomizationProfiles.map(profile => (
+                                <SelectItem key={profile.id} value={profile.id}>
+                                  {profile.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label>Variação de Delay (%)</Label>
+                            <Input
+                              type="number"
+                              min="0"
+                              max="100"
+                              value={formData.randomization_config.delay_variance}
+                              onChange={(e) =>
+                                setFormData(prev => ({
+                                  ...prev,
+                                  randomization_config: {
+                                    ...prev.randomization_config!,
+                                    delay_variance: parseInt(e.target.value)
+                                  }
+                                }))
+                              }
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <Label>Rotação de Templates</Label>
+                              <p className="text-xs text-muted-foreground">
+                                Variar mensagens automaticamente
+                              </p>
+                            </div>
+                            <Switch
+                              checked={formData.randomization_config.template_rotation}
+                              onCheckedChange={(checked) =>
+                                setFormData(prev => ({
+                                  ...prev,
+                                  randomization_config: {
+                                    ...prev.randomization_config!,
+                                    template_rotation: checked
+                                  }
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <Label>Simulação Humana</Label>
+                            <p className="text-sm text-muted-foreground">
+                              Simular velocidade de digitação e leitura
+                            </p>
+                          </div>
+                          <Switch
+                            checked={formData.randomization_config.human_simulation}
+                            onCheckedChange={(checked) =>
+                              setFormData(prev => ({
+                                ...prev,
+                                randomization_config: {
+                                  ...prev.randomization_config!,
+                                  human_simulation: checked
+                                }
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
 
-                  <div className="flex gap-3">
-                    <Button onClick={handleSubmit} disabled={campaignLoading} className="flex-1">
-                      {campaignLoading ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                          Criando...
-                        </>
-                      ) : (
-                        <>
-                          <Send className="h-4 w-4 mr-2" />
-                          {scheduleEnabled ? 'Agendar Campanha' : 'Criar e Enviar'}
-                        </>
-                      )}
+                  <Separator />
+
+                  {/* Rate Limiting */}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Gauge className="h-5 w-5 text-orange-600" />
+                        <div>
+                          <Label className="text-base font-medium">Controle de Velocidade</Label>
+                          <p className="text-sm text-muted-foreground">
+                            Limite a velocidade de envio para evitar bloqueios
+                          </p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={formData.rate_limit_config?.enabled}
+                        onCheckedChange={(checked) =>
+                          setFormData(prev => ({
+                            ...prev,
+                            rate_limit_config: {
+                              ...prev.rate_limit_config!,
+                              enabled: checked
+                            }
+                          }))
+                        }
+                      />
+                    </div>
+
+                    {formData.rate_limit_config?.enabled && (
+                      <div className="ml-7 space-y-4 p-4 bg-muted/50 rounded-lg">
+                        <div className="space-y-2">
+                          <Label>Configuração de Rate Limit</Label>
+                          <Select
+                            value={formData.rate_limit_config.config_id || ''}
+                            onValueChange={(value) =>
+                              setFormData(prev => ({
+                                ...prev,
+                                rate_limit_config: {
+                                  ...prev.rate_limit_config!,
+                                  config_id: value
+                                }
+                              }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Selecione uma configuração" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {rateLimitConfigs.map(config => (
+                                <SelectItem key={config.id} value={config.id}>
+                                  {config.name} ({config.messages_per_minute}/min)
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label>Mensagens por Minuto</Label>
+                            <Input
+                              type="number"
+                              min="1"
+                              max="60"
+                              value={formData.rate_limit_config.messages_per_minute}
+                              onChange={(e) =>
+                                setFormData(prev => ({
+                                  ...prev,
+                                  rate_limit_config: {
+                                    ...prev.rate_limit_config!,
+                                    messages_per_minute: parseInt(e.target.value)
+                                  }
+                                }))
+                              }
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <Label>Controle de Burst</Label>
+                              <p className="text-xs text-muted-foreground">
+                                Prevenir rajadas de mensagens
+                              </p>
+                            </div>
+                            <Switch
+                              checked={formData.rate_limit_config.burst_control}
+                              onCheckedChange={(checked) =>
+                                setFormData(prev => ({
+                                  ...prev,
+                                  rate_limit_config: {
+                                    ...prev.rate_limit_config!,
+                                    burst_control: checked
+                                  }
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <Label>Rate Adaptativo</Label>
+                            <p className="text-sm text-muted-foreground">
+                              Ajustar velocidade baseado no desempenho
+                            </p>
+                          </div>
+                          <Switch
+                            checked={formData.rate_limit_config.adaptive_rate}
+                            onCheckedChange={(checked) =>
+                              setFormData(prev => ({
+                                ...prev,
+                                rate_limit_config: {
+                                  ...prev.rate_limit_config!,
+                                  adaptive_rate: checked
+                                }
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between pt-4">
+                    <Button variant="outline" onClick={() => setCurrentStep(3)}>
+                      <ArrowLeft className="h-4 w-4 mr-2" />
+                      Voltar
                     </Button>
-                    <Button variant="outline" onClick={handleSaveDraft} disabled={campaignLoading}>
-                      <Save className="h-4 w-4 mr-2" />
-                      Salvar Rascunho
+                    <Button onClick={() => setCurrentStep(5)}>
+                      Próximo: Agendamento
+                      <ArrowLeft className="h-4 w-4 ml-2 rotate-180" />
                     </Button>
                   </div>
                 </CardContent>
               </Card>
             </TabsContent>
+
+            {/* ... existing code for other tabs ... */}
           </Tabs>
         </div>
 

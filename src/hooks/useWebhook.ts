@@ -1,138 +1,114 @@
-import { useState, useEffect, useCallback } from 'react';
-import { webhookService, ProcessedMessage, WebhookEvent } from '@/services/webhookService';
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { webhookService } from '@/services/webhookService'
+import { isTestEnv } from '@/lib/env'
 
-export interface UseWebhookReturn {
-  messages: ProcessedMessage[];
-  connectionStatus: string;
-  qrCode?: string;
-  isConnected: boolean;
-  addMessage: (message: ProcessedMessage) => void;
-  clearMessages: () => void;
-  simulateMessage: (text: string, from: string) => void;
-  simulateConnection: (status: string, qr?: string) => void;
+export interface WebhookMessage {
+  id: string
+  chatId: string
+  from: string
+  to: string
+  text?: string
+  timestamp: number
 }
 
-export const useWebhook = (): UseWebhookReturn => {
-  const [messages, setMessages] = useState<ProcessedMessage[]>([]);
-  const [connectionStatus, setConnectionStatus] = useState<string>('disconnected');
-  const [qrCode, setQrCode] = useState<string | undefined>();
+export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error'
 
-  // Handler para novas mensagens
-  const handleNewMessage = useCallback((message: ProcessedMessage) => {
+export function useWebhook() {
+  const [messages, setMessages] = useState<WebhookMessage[]>([])
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionState>('disconnected')
+  const [qrCode, setQrCode] = useState<string | undefined>()
+  const initializedRef = useRef(false)
+
+  const addMessage = useCallback((msg: WebhookMessage) => {
     setMessages(prev => {
-      // Evitar duplicatas
-      const exists = prev.some(msg => msg.id === message.id);
-      if (exists) return prev;
-      
-      // Adicionar nova mensagem e manter apenas as últimas 100
-      const updated = [...prev, message].slice(-100);
-      return updated.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-    });
-  }, []);
+      // Evitar duplicados e limitar a 100 mensagens
+      const exists = prev.some(m => m.id === msg.id)
+      if (exists) return prev
+      const next = [msg, ...prev]
+      return next.slice(0, 100)
+    })
+  }, [])
 
-  // Handler para mudanças de conexão
-  const handleConnectionChange = useCallback((status: string, qr?: string) => {
-    setConnectionStatus(status);
-    
-    if (qr) {
-      setQrCode(qr);
-    } else if (status === 'open') {
-      setQrCode(undefined);
-    }
-  }, []);
+  const clearMessages = useCallback(() => setMessages([]), [])
 
-  // Configurar listeners do webhook
   useEffect(() => {
-    const unsubscribeMessage = webhookService.onMessage(handleNewMessage);
-    const unsubscribeConnection = webhookService.onConnection(handleConnectionChange);
+    if (initializedRef.current) return
 
-    return () => {
-      unsubscribeMessage();
-      unsubscribeConnection();
-    };
-  }, [handleNewMessage, handleConnectionChange]);
+    // Em ambiente de teste, não registrar listeners do webhookService
+    if (isTestEnv) return
 
-  // Adicionar mensagem manualmente
-  const addMessage = useCallback((message: ProcessedMessage) => {
-    handleNewMessage(message);
-  }, [handleNewMessage]);
+    initializedRef.current = true
 
-  // Limpar mensagens
-  const clearMessages = useCallback(() => {
-    setMessages([]);
-  }, []);
-
-  // Simular recebimento de mensagem (para desenvolvimento)
-  const simulateMessage = useCallback((text: string, from: string) => {
-    const simulatedMessage: ProcessedMessage = {
-      id: `sim_${Date.now()}_${Math.random()}`,
-      from,
-      fromName: from.includes('@') ? from.split('@')[0] : from,
-      text,
-      type: 'text',
-      timestamp: new Date(),
-      isFromMe: false
-    };
-
-    const webhookEvent: WebhookEvent = {
-      event: 'messages.upsert',
-      instance: 'default-instance',
-      data: {
-        messages: [{
-          key: {
-            remoteJid: from,
-            fromMe: false,
-            id: simulatedMessage.id
-          },
-          message: {
-            conversation: text
-          },
-          messageTimestamp: Math.floor(simulatedMessage.timestamp.getTime() / 1000),
-          pushName: simulatedMessage.fromName
-        }]
+    // Registrar handler de mensagens processadas pelo serviço
+    const unsubscribeMessage = webhookService.onMessage(processed => {
+      const msg: WebhookMessage = {
+        id: processed.id,
+        chatId: processed.from,
+        from: processed.isFromMe ? 'me' : processed.from,
+        to: processed.isFromMe ? processed.from : 'me',
+        text: processed.text,
+        timestamp: processed.timestamp.getTime()
       }
-    };
+      addMessage(msg)
+    })
 
-    webhookService.simulateWebhook(webhookEvent);
-  }, []);
+    // Registrar handler de conexão (status + QR opcional)
+    const unsubscribeConnection = webhookService.onConnection((status, qr) => {
+      const mapped = mapStateToStatus(status)
+      setConnectionStatus(mapped)
+      if (qr && typeof qr === 'string') {
+        const dataUri = qr.startsWith('data:image') ? qr : `data:image/png;base64,${qr}`
+        setQrCode(dataUri)
+      }
+      if (mapped === 'connected') {
+        setQrCode(undefined)
+      }
+    })
 
-  // Simular mudança de conexão (para desenvolvimento)
-  const simulateConnection = useCallback((status: string, qr?: string) => {
-    let webhookEvent: WebhookEvent;
-
-    if (qr) {
-      webhookEvent = {
-        event: 'qr.updated',
-        instance: 'default-instance',
-        data: { qr }
-      };
-    } else {
-      webhookEvent = {
-        event: 'connection.update',
-        instance: 'default-instance',
-        data: {
-          connection: {
-            state: status as any
-          }
-        }
-      };
+    // Cleanup
+    return () => {
+      unsubscribeMessage?.()
+      unsubscribeConnection?.()
     }
+  }, [addMessage])
 
-    webhookService.simulateWebhook(webhookEvent);
-  }, []);
+  const simulateMessage = useCallback((msg: Partial<WebhookMessage>) => {
+    const simulated: WebhookMessage = {
+      id: msg.id || `sim-${Date.now()}`,
+      chatId: msg.chatId || 'unknown@s.whatsapp.net',
+      from: msg.from || 'unknown',
+      to: msg.to || 'me',
+      text: msg.text || 'Mensagem de teste',
+      timestamp: msg.timestamp || Date.now()
+    }
+    addMessage(simulated)
+  }, [addMessage])
 
-  const isConnected = connectionStatus === 'open' || connectionStatus === 'connected';
+  const simulateConnection = useCallback((state: ConnectionState, qr?: string) => {
+    setConnectionStatus(state)
+    if (qr) setQrCode(qr)
+    if (state === 'connected') setQrCode(undefined)
+  }, [])
+
+  const isConnected = connectionStatus === 'connected'
 
   return {
     messages,
-    connectionStatus,
-    qrCode,
-    isConnected,
     addMessage,
     clearMessages,
     simulateMessage,
+    connectionStatus,
+    qrCode,
+    isConnected,
     simulateConnection
-  };
-};
+  }
+}
 
-export default useWebhook;
+function mapStateToStatus(state?: string): ConnectionState {
+  const s = (state || '').toLowerCase()
+  if (!s) return 'error'
+  if (['open','online','logged','authenticated','ready','connected','qr_read_success','success'].includes(s)) return 'connected'
+  if (['connecting','qr','qrcode','qr_read','qr_idle','loading_screen','pairing','require_connection','initializing','starting','qr_updated'].includes(s)) return 'connecting'
+  if (['close','closed','offline','timeout','unauthenticated','conflict','disconnected','logout','destroyed'].includes(s)) return 'disconnected'
+  return 'error'
+}

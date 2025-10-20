@@ -58,6 +58,7 @@ import {
   Link,
   Unlink
 } from 'lucide-react'
+import { useEvolutionApi } from '@/hooks/useEvolutionApi'
 
 // Mock data para demonstração
 const mockInstances = [
@@ -131,11 +132,16 @@ export default function WhatsAppIntegration() {
     secret: ''
   })
 
+  // Integração real: usar hook que lê do Supabase/Evolution API
+  const { instances, loading, createInstance, connect, disconnect, checkConnectionStatus, deleteInstance } = useEvolutionApi()
+  const connectedCount = instances.filter(i => i.status === 'connected').length
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'connected': return 'bg-green-500'
       case 'connecting': return 'bg-yellow-500'
-      case 'disconnected': return 'bg-red-500'
+      case 'disconnected': return 'bg-gray-500'
+      case 'error': return 'bg-red-500'
       default: return 'bg-gray-500'
     }
   }
@@ -145,6 +151,7 @@ export default function WhatsAppIntegration() {
       case 'connected': return 'Conectado'
       case 'connecting': return 'Conectando'
       case 'disconnected': return 'Desconectado'
+      case 'error': return 'Erro'
       default: return 'Desconhecido'
     }
   }
@@ -156,16 +163,22 @@ export default function WhatsAppIntegration() {
     }))
   }
 
-  const handleCreateInstance = () => {
-    console.log('Criando nova instância:', newInstance)
-    setShowCreateDialog(false)
-    setNewInstance({
-      name: '',
-      phoneNumber: '',
-      businessAccountId: '',
-      appId: '',
-      accessToken: ''
-    })
+  const handleCreateInstance = async () => {
+    try {
+      if (!newInstance.name.trim()) return
+      await createInstance(newInstance.name)
+      setShowCreateDialog(false)
+      setNewInstance({
+        name: '',
+        phoneNumber: '',
+        businessAccountId: '',
+        appId: '',
+        accessToken: ''
+      })
+    } catch (e) {
+      // Toasts já tratados no hook
+      console.error('Falha ao criar instância', e)
+    }
   }
 
   const handleCreateWebhook = () => {
@@ -213,7 +226,7 @@ export default function WhatsAppIntegration() {
             <Smartphone className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">1</div>
+            <div className="text-2xl font-bold">{connectedCount}</div>
             <p className="text-xs text-muted-foreground">
               +0% em relação ao mês passado
             </p>
@@ -269,7 +282,7 @@ export default function WhatsAppIntegration() {
         {/* Instâncias Tab */}
         <TabsContent value="instances" className="space-y-4">
           <div className="grid gap-4">
-            {mockInstances.map((instance) => (
+            {instances.map((instance) => (
               <Card key={instance.id}>
                 <CardHeader>
                   <div className="flex items-center justify-between">
@@ -277,13 +290,28 @@ export default function WhatsAppIntegration() {
                       <div className={`w-3 h-3 rounded-full ${getStatusColor(instance.status)}`} />
                       <div>
                         <CardTitle className="text-lg">{instance.name}</CardTitle>
-                        <CardDescription>{instance.phoneNumber}</CardDescription>
+                        <CardDescription>{instance.phone_number || '—'}</CardDescription>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge variant={instance.status === 'connected' ? 'default' : 'secondary'}>
                         {getStatusText(instance.status)}
                       </Badge>
+                      {instance.status !== 'connected' ? (
+                        <Button variant="outline" size="sm" className="gap-2" onClick={() => connect(instance.id)}>
+                          <Link className="h-4 w-4" />
+                          Conectar
+                        </Button>
+                      ) : (
+                        <Button variant="outline" size="sm" className="gap-2" onClick={() => disconnect(instance.id)}>
+                          <Unlink className="h-4 w-4" />
+                          Desconectar
+                        </Button>
+                      )}
+                      <Button variant="outline" size="sm" className="gap-2" onClick={() => checkConnectionStatus(instance.id)}>
+                        <RefreshCw className="h-4 w-4" />
+                        Atualizar Status
+                      </Button>
                       <Button variant="outline" size="sm" className="gap-2">
                         <Settings className="h-4 w-4" />
                         Configurar
@@ -295,34 +323,34 @@ export default function WhatsAppIntegration() {
                   <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                     <div>
                       <Label className="text-sm text-muted-foreground">Última Atividade</Label>
-                      <p className="text-sm font-medium">{instance.lastActivity}</p>
+                      <p className="text-sm font-medium">{instance.last_activity ? new Date(instance.last_activity).toLocaleString() : '—'}</p>
                     </div>
                     <div>
-                      <Label className="text-sm text-muted-foreground">Mensagens Enviadas</Label>
-                      <p className="text-sm font-medium">{instance.messagesCount.toLocaleString()}</p>
+                      <Label className="text-sm text-muted-foreground">Webhook URL</Label>
+                      <p className="text-sm font-medium">{instance.webhook_url || '—'}</p>
                     </div>
                     <div>
-                      <Label className="text-sm text-muted-foreground">Business Account ID</Label>
-                      <p className="text-sm font-medium">{instance.businessAccountId}</p>
+                      <Label className="text-sm text-muted-foreground">API Key</Label>
+                      <p className="text-sm font-medium">{instance.api_key || '—'}</p>
                     </div>
                     <div>
-                      <Label className="text-sm text-muted-foreground">App ID</Label>
-                      <p className="text-sm font-medium">{instance.appId}</p>
+                      <Label className="text-sm text-muted-foreground">Número</Label>
+                      <p className="text-sm font-medium">{instance.phone_number || '—'}</p>
                     </div>
                   </div>
 
-                  {instance.status === 'disconnected' && instance.qrCode && (
+                  {instance.status === 'connecting' && instance.qr_code && (
                     <div className="border rounded-lg p-4 bg-muted/50">
                       <div className="flex items-center gap-4">
                         <div className="w-32 h-32 bg-white rounded-lg flex items-center justify-center">
-                          <img src={instance.qrCode} alt="QR Code" className="w-28 h-28" />
+                          <img src={instance.qr_code} alt="QR Code" className="w-28 h-28" />
                         </div>
                         <div className="flex-1">
                           <h4 className="font-medium mb-2">Escaneie o QR Code</h4>
                           <p className="text-sm text-muted-foreground mb-4">
                             Abra o WhatsApp no seu telefone e escaneie este código para conectar a instância.
                           </p>
-                          <Button variant="outline" size="sm" className="gap-2">
+                          <Button variant="outline" size="sm" className="gap-2" onClick={() => connect(instance.id)}>
                             <RefreshCw className="h-4 w-4" />
                             Atualizar QR Code
                           </Button>
@@ -347,9 +375,76 @@ export default function WhatsAppIntegration() {
                         <Edit className="h-4 w-4" />
                         Editar
                       </Button>
-                      <Button variant="outline" size="sm" className="gap-2 text-destructive">
+                      <Button variant="outline" size="sm" className="gap-2 text-destructive" onClick={() => deleteInstance(instance.id)}>
                         <Trash2 className="h-4 w-4" />
                         Excluir
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+
+        {/* API Keys Tab */}
+        <TabsContent value="api-keys" className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-medium">Chaves de API</h3>
+              <p className="text-sm text-muted-foreground">
+                Gerencie as chaves de acesso para integração com WhatsApp Business API
+              </p>
+            </div>
+            <Dialog open={showApiKeyDialog} onOpenChange={setShowApiKeyDialog}>
+              <DialogTrigger asChild>
+                <Button className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  Nova Chave
+                </Button>
+              </DialogTrigger>
+            </Dialog>
+          </div>
+
+          <div className="grid gap-4">
+            {instances.map((instance) => (
+              <Card key={instance.id}>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="text-lg">{instance.name}</CardTitle>
+                      <CardDescription>Chave de API para {instance.phone_number || '—'}</CardDescription>
+                    </div>
+                    <Badge variant="outline">
+                      <Key className="h-3 w-3 mr-1" />
+                      API Key
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Chave de API</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type={showApiKey[instance.id] ? 'text' : 'password'}
+                        value={instance.api_key || ''}
+                        readOnly
+                        className="font-mono"
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => toggleApiKeyVisibility(instance.id)}
+                      >
+                        {showApiKey[instance.id] ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button variant="outline" size="sm" className="gap-2" onClick={() => navigator.clipboard.writeText(instance.api_key || '')}>
+                        <Copy className="h-4 w-4" />
+                        Copiar
                       </Button>
                     </div>
                   </div>
@@ -439,107 +534,6 @@ export default function WhatsAppIntegration() {
                       <Button variant="outline" size="sm" className="gap-2 text-destructive">
                         <Trash2 className="h-4 w-4" />
                         Excluir
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </TabsContent>
-
-        {/* API Keys Tab */}
-        <TabsContent value="api-keys" className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-medium">Chaves de API</h3>
-              <p className="text-sm text-muted-foreground">
-                Gerencie as chaves de acesso para integração com WhatsApp Business API
-              </p>
-            </div>
-            <Dialog open={showApiKeyDialog} onOpenChange={setShowApiKeyDialog}>
-              <DialogTrigger asChild>
-                <Button className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  Nova Chave
-                </Button>
-              </DialogTrigger>
-            </Dialog>
-          </div>
-
-          <div className="grid gap-4">
-            {mockInstances.map((instance) => (
-              <Card key={instance.id}>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="text-lg">{instance.name}</CardTitle>
-                      <CardDescription>Chave de API para {instance.phoneNumber}</CardDescription>
-                    </div>
-                    <Badge variant="outline">
-                      <Key className="h-3 w-3 mr-1" />
-                      API Key
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Chave de API</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type={showApiKey[instance.id] ? 'text' : 'password'}
-                        value={instance.apiKey}
-                        readOnly
-                        className="font-mono"
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => toggleApiKeyVisibility(instance.id)}
-                      >
-                        {showApiKey[instance.id] ? (
-                          <EyeOff className="h-4 w-4" />
-                        ) : (
-                          <Eye className="h-4 w-4" />
-                        )}
-                      </Button>
-                      <Button variant="outline" size="sm" className="gap-2">
-                        <Copy className="h-4 w-4" />
-                        Copiar
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Webhook URL</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        value={instance.webhookUrl}
-                        readOnly
-                        className="font-mono"
-                      />
-                      <Button variant="outline" size="sm" className="gap-2">
-                        <Copy className="h-4 w-4" />
-                        Copiar
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-4 border-t">
-                    <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" className="gap-2">
-                        <RefreshCw className="h-4 w-4" />
-                        Regenerar
-                      </Button>
-                      <Button variant="outline" size="sm" className="gap-2">
-                        <Download className="h-4 w-4" />
-                        Baixar Config
-                      </Button>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" className="gap-2">
-                        <Shield className="h-4 w-4" />
-                        Permissões
                       </Button>
                     </div>
                   </div>

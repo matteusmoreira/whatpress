@@ -1,400 +1,300 @@
-import { useState, useEffect, useCallback } from 'react';
-import { whatsappInstanceService, WhatsAppInstance } from '@/services/whatsappInstanceService';
-import { evolutionApi, WhatsAppMessage, WhatsAppContact, EvolutionApiService } from '@/services/evolutionApi';
-import { useToast } from '@/hooks/use-toast';
-
-export interface ConnectionStatus {
-  isConnected: boolean;
-  qrCode?: string;
-  status: 'disconnected' | 'connecting' | 'connected' | 'error';
-  error?: string;
-}
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { whatsappInstanceService, WhatsAppInstance } from '@/services/whatsappInstanceService'
+import { EvolutionApiService } from '@/services/evolutionApi'
+import { useToast } from '@/hooks/use-toast'
+import { supabase } from '@/lib/supabase'
+import { isTestEnv } from '@/lib/env'
+import { useTenant } from '@/hooks/useTenant'
 
 export function useEvolutionApi() {
-  const [instances, setInstances] = useState<WhatsAppInstance[]>([]);
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
-    isConnected: false,
-    status: 'disconnected'
-  });
-  const [contacts, setContacts] = useState<WhatsAppContact[]>([]);
-  const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
-  const [loading, setLoading] = useState(false);
-  const { toast } = useToast();
+  const { toast } = useToast()
+  const { currentTenant } = useTenant()
+  const [instances, setInstances] = useState<WhatsAppInstance[]>([])
+  const [loading, setLoading] = useState(false)
+  const [contacts, setContacts] = useState<any[]>([])
+  const [messages, setMessages] = useState<any[]>([])
+  const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+  const pollingIntervalRef = useRef<number | null>(null)
 
-  // Carregar instâncias do usuário
   const loadInstances = useCallback(async () => {
+    setLoading(true)
     try {
-      setLoading(true);
-      const userInstances = await whatsappInstanceService.getUserInstances();
-      setInstances(userInstances);
-      
-      // Se há instâncias, verificar status da primeira
-      if (userInstances.length > 0) {
-        const firstInstance = userInstances[0];
-        setConnectionStatus({
-          isConnected: firstInstance.status === 'connected',
-          status: firstInstance.status,
-          qrCode: firstInstance.qr_code || undefined
-        });
-      }
+      const data = await whatsappInstanceService.getUserInstances(currentTenant?.id)
+      setInstances(data)
     } catch (error: any) {
-      console.error('Erro ao carregar instâncias:', error);
+      console.error('Erro ao carregar instâncias:', error)
       toast({
-        title: "Erro ao carregar instâncias",
-        description: error.message || "Erro desconhecido",
-        variant: "destructive"
-      });
+        title: 'Erro ao carregar instâncias',
+        description: error?.message || 'Tente novamente mais tarde',
+        variant: 'destructive'
+      })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [toast]);
+  }, [toast, currentTenant?.id])
 
-  // Criar nova instância
-  const createInstance = useCallback(async (name: string) => {
+  const createInstance = useCallback(async (name: string, webhookUrl?: string) => {
     try {
-      setLoading(true);
-      const newInstance = await whatsappInstanceService.createInstance({ name });
-      
-      // Recarregar lista de instâncias
-      await loadInstances();
-      
-      toast({
-        title: "Instância criada com sucesso!",
-        description: `A instância "${name}" foi criada.`,
-      });
-      
-      return newInstance;
+      const instance = await whatsappInstanceService.createInstance({ name, webhook_url: webhookUrl }, currentTenant?.id)
+      setInstances(prev => [instance, ...prev])
+      toast({ title: 'Instância criada', description: `A instância "${instance.name}" foi criada.` })
+      return instance
     } catch (error: any) {
-      console.error('Erro ao criar instância:', error);
-      toast({
-        title: "Erro ao criar instância",
-        description: error.message || "Erro desconhecido",
-        variant: "destructive"
-      });
-      throw error;
-    } finally {
-      setLoading(false);
+      toast({ title: 'Erro ao criar instância', description: error?.message, variant: 'destructive' })
+      throw error
     }
-  }, [loadInstances, toast]);
+  }, [toast, currentTenant?.id])
 
-  // Conectar instância
-  const connect = useCallback(async (instanceId?: string) => {
+  const connect = useCallback(async (instanceId: string) => {
     try {
-      setLoading(true);
-      
-      // Se não especificou ID, usar a primeira instância
-      const targetInstanceId = instanceId || instances[0]?.id;
-      if (!targetInstanceId) {
-        throw new Error('Nenhuma instância disponível');
+      const { qrCode, status } = await whatsappInstanceService.connectInstance(instanceId, currentTenant?.id)
+      setInstances(prev => prev.map(i => i.id === instanceId ? { ...i, status, qr_code: qrCode ?? i.qr_code } : i))
+      if (qrCode) {
+        toast({ title: 'QR Code disponível', description: 'Abra o QR Code para conectar seu WhatsApp.' })
+      } else {
+        toast({ title: 'Conexão atualizada', description: `Status atual: ${status}` })
       }
-
-      const result = await whatsappInstanceService.connectInstance(targetInstanceId);
-      
-      setConnectionStatus({
-        isConnected: result.status === 'connected',
-        status: result.status as any,
-        qrCode: result.qrCode
-      });
-
-      // Recarregar instâncias para atualizar status
-      await loadInstances();
-
-      if (result.qrCode) {
-        toast({
-          title: "QR Code gerado",
-          description: "Escaneie o QR Code com seu WhatsApp para conectar.",
-        });
-      } else if (result.status === 'connected') {
-        toast({
-          title: "Conectado com sucesso!",
-          description: "Sua instância WhatsApp está conectada.",
-        });
-      }
+      return { qrCode, status }
     } catch (error: any) {
-      console.error('Erro ao conectar:', error);
-      try {
-        // Mesmo em caso de erro inicial, validar o status real da instância
-        const targetInstanceId = instanceId || instances[0]?.id;
-        if (targetInstanceId) {
-          const status = await whatsappInstanceService.checkInstanceStatus(targetInstanceId);
-          setConnectionStatus({
-            isConnected: status === 'connected',
-            status: status as any,
-            error: status === 'error' ? error.message : undefined
-          });
-
-          if (status === 'connected') {
-            toast({
-              title: "Conectado com sucesso!",
-              description: "Sua instância WhatsApp está conectada.",
-            });
-          } else if (status === 'connecting') {
-            toast({
-              title: "Conexão em andamento",
-              description: "Aguardando confirmação do WhatsApp. Assim que conectar, o status será atualizado.",
-            });
-          } else {
-            toast({
-              title: "Erro ao conectar",
-              description: error.message || "Erro desconhecido",
-              variant: "destructive"
-            });
-          }
-        } else {
-          setConnectionStatus({
-            isConnected: false,
-            status: 'error',
-            error: error.message
-          });
-          toast({
-            title: "Erro ao conectar",
-            description: error.message || "Erro desconhecido",
-            variant: "destructive"
-          });
-        }
-      } catch (statusError: any) {
-        setConnectionStatus({
-          isConnected: false,
-          status: 'error',
-          error: error.message
-        });
-        toast({
-          title: "Erro ao conectar",
-          description: error.message || "Erro desconhecido",
-          variant: "destructive"
-        });
-      }
-    } finally {
-      setLoading(false);
+      toast({ title: 'Erro ao conectar instância', description: error?.message, variant: 'destructive' })
+      throw error
     }
-  }, [instances, loadInstances, toast]);
+  }, [toast, currentTenant?.id])
 
-  // Desconectar instância
-  const disconnect = useCallback(async (instanceId?: string) => {
+  const disconnect = useCallback(async (instanceId: string) => {
     try {
-      setLoading(true);
-      
-      const targetInstanceId = instanceId || instances[0]?.id;
-      if (!targetInstanceId) {
-        throw new Error('Nenhuma instância disponível');
-      }
-
-      await whatsappInstanceService.disconnectInstance(targetInstanceId);
-      
-      setConnectionStatus({
-        isConnected: false,
-        status: 'disconnected'
-      });
-
-      // Recarregar instâncias
-      await loadInstances();
-
-      toast({
-        title: "Desconectado com sucesso",
-        description: "Instância WhatsApp foi desconectada.",
-      });
+      await whatsappInstanceService.disconnectInstance(instanceId, currentTenant?.id)
+      setInstances(prev => prev.map(i => i.id === instanceId ? { ...i, status: 'disconnected' } : i))
+      toast({ title: 'Instância desconectada' })
     } catch (error: any) {
-      console.error('Erro ao desconectar:', error);
-      toast({
-        title: "Erro ao desconectar",
-        description: error.message || "Erro desconhecido",
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
+      toast({ title: 'Erro ao desconectar', description: error?.message, variant: 'destructive' })
     }
-  }, [instances, loadInstances, toast]);
+  }, [toast, currentTenant?.id])
 
-  // Verificar status de conexão
-  const checkConnectionStatus = useCallback(async (instanceId?: string) => {
+  const checkConnectionStatus = useCallback(async (instanceId: string): Promise<WhatsAppInstance['status']> => {
     try {
-      setLoading(true);
-      
-      const targetInstanceId = instanceId || instances[0]?.id;
-      if (!targetInstanceId) {
-        console.log('⚠️ Nenhuma instância disponível para verificar status');
-        return;
-      }
-
-      console.log(`🔍 Verificando status da instância: ${targetInstanceId}`);
-      const status = await whatsappInstanceService.checkInstanceStatus(targetInstanceId);
-      console.log(`📊 Status retornado: ${status}`);
-      
-      setConnectionStatus({
-        isConnected: status === 'connected',
-        status: status as any
-      });
-
-      // Recarregar instâncias para atualizar a UI
-      await loadInstances();
-      
-      // Se conectou com sucesso, mostrar toast
+      const status = await whatsappInstanceService.checkInstanceStatus(instanceId, currentTenant?.id)
+      setInstances(prev => prev.map(i => i.id === instanceId ? { ...i, status } : i))
       if (status === 'connected') {
-        toast({
-          title: "✅ Conectado com sucesso!",
-          description: "Sua instância WhatsApp está conectada e funcionando.",
-        });
+        toast({ title: 'Instância conectada', description: 'Seu WhatsApp foi conectado com sucesso.' })
       }
+      return status as WhatsAppInstance['status']
     } catch (error: any) {
-      console.error('💥 Erro ao verificar status:', error);
-      setConnectionStatus({
-        isConnected: false,
-        status: 'error',
-        error: error.message
-      });
-    } finally {
-      setLoading(false);
+      toast({ title: 'Erro ao verificar status', description: error?.message, variant: 'destructive' })
+      return 'error' as WhatsAppInstance['status']
     }
-  }, [instances, loadInstances, toast]);
+  }, [toast, currentTenant?.id])
 
-  // Deletar instância
   const deleteInstance = useCallback(async (instanceId: string) => {
     try {
-      setLoading(true);
-      await whatsappInstanceService.deleteInstance(instanceId);
-      
-      // Recarregar instâncias
-      await loadInstances();
-      
-      toast({
-        title: "Instância deletada",
-        description: "A instância foi removida com sucesso.",
-      });
+      await whatsappInstanceService.deleteInstance(instanceId, currentTenant?.id)
+      setInstances(prev => prev.filter(i => i.id !== instanceId))
+      toast({ title: 'Instância excluída' })
     } catch (error: any) {
-      console.error('Erro ao deletar instância:', error);
-      toast({
-        title: "Erro ao deletar instância",
-        description: error.message || "Erro desconhecido",
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
+      toast({ title: 'Erro ao excluir instância', description: error?.message, variant: 'destructive' })
     }
-  }, [loadInstances, toast]);
+  }, [toast, currentTenant?.id])
 
-  // Buscar contatos (usando Evolution API diretamente)
-  const fetchContacts = useCallback(async () => {
+  const fetchContacts = useCallback(async (targetInstance: WhatsAppInstance) => {
     try {
-      setLoading(true);
-      
-      // Usar a instância conectada (ou a primeira disponível)
-      const targetInstance = instances.find(i => i.status === 'connected') || instances[0];
-      if (!targetInstance) {
-        throw new Error('Nenhuma instância disponível para buscar contatos');
-      }
-
-      const service = new EvolutionApiService({
+      const instanceName = targetInstance.api_key || targetInstance.name
+      const evolutionApi = new EvolutionApiService({
         baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
         apiKey: import.meta.env.VITE_EVOLUTION_API_KEY || 'your-api-key',
-        instanceName: targetInstance.api_key || targetInstance.name
-      });
-
-      const contactsList = await service.getContacts();
-      setContacts(contactsList);
+        instanceName
+      })
+      const data = await evolutionApi.getContacts()
+      setContacts(data || [])
+      return data || []
     } catch (error: any) {
-      console.error('Erro ao buscar contatos:', error);
-      toast({
-        title: "Erro ao buscar contatos",
-        description: error.message || "Erro desconhecido",
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
+      toast({ title: 'Erro ao buscar contatos', description: error?.message, variant: 'destructive' })
+      return []
     }
-  }, [instances, toast]);
+  }, [toast])
 
-  // Buscar mensagens (usando Evolution API diretamente)
-  const fetchMessages = useCallback(async (contactNumber: string) => {
+  const fetchMessages = useCallback(async (targetInstance: WhatsAppInstance, contactNumber: string) => {
     try {
-      setLoading(true);
-      
-      // Usar a instância conectada (ou a primeira disponível)
-      const targetInstance = instances.find(i => i.status === 'connected') || instances[0];
-      if (!targetInstance) {
-        throw new Error('Nenhuma instância disponível para buscar mensagens');
-      }
-
-      const service = new EvolutionApiService({
+      const instanceName = targetInstance.api_key || targetInstance.name
+      const evolutionApi = new EvolutionApiService({
         baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
         apiKey: import.meta.env.VITE_EVOLUTION_API_KEY || 'your-api-key',
-        instanceName: targetInstance.api_key || targetInstance.name
-      });
-
-      const messagesList = await service.getMessages(contactNumber);
-      setMessages(messagesList);
+        instanceName
+      })
+      const data = await evolutionApi.getMessages(contactNumber)
+      setMessages(data || [])
+      return data || []
     } catch (error: any) {
-      console.error('Erro ao buscar mensagens:', error);
-      toast({
-        title: "Erro ao buscar mensagens",
-        description: error.message || "Erro desconhecido",
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
+      toast({ title: 'Erro ao buscar mensagens', description: error?.message, variant: 'destructive' })
+      return []
     }
-  }, [instances, toast]);
+  }, [toast])
 
-  // Enviar mensagem de texto
-  const sendMessage = useCallback(async (instanceName: string, to: string, text: string) => {
+  const sendMessage = useCallback(async (targetInstance: WhatsAppInstance, toNumber: string, text: string) => {
     try {
-      setLoading(true);
-      
-      // Verificar se a instância existe e está conectada
-      const instance = instances.find(inst => inst.name === instanceName);
-      if (!instance) {
-        throw new Error('Instância não encontrada');
+      if (targetInstance.status !== 'connected') {
+        toast({ title: 'Instância não conectada', description: 'Conecte a instância antes de enviar mensagens.', variant: 'destructive' })
+        return { success: false }
       }
-      
-      if (instance.status !== 'connected') {
-        throw new Error('Instância não está conectada');
-      }
-
-      const message = await evolutionApi.sendTextMessage(to, text);
-      
-      toast({
-        title: "Mensagem enviada",
-        description: "Mensagem enviada com sucesso!",
-        variant: "default"
-      });
-      
-      return message;
+      const instanceName = targetInstance.api_key || targetInstance.name
+      const evolutionApi = new EvolutionApiService({
+        baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
+        apiKey: import.meta.env.VITE_EVOLUTION_API_KEY || 'your-api-key',
+        instanceName
+      })
+      await evolutionApi.sendTextMessage(toNumber, text)
+      toast({ title: 'Mensagem enviada' })
+      return { success: true }
     } catch (error: any) {
-      console.error('Erro ao enviar mensagem:', error);
-      toast({
-        title: "Erro ao enviar mensagem",
-        description: error.message || "Erro desconhecido",
-        variant: "destructive"
-      });
-      throw error;
-    } finally {
-      setLoading(false);
+      toast({ title: 'Erro ao enviar mensagem', description: error?.message, variant: 'destructive' })
+      return { success: false }
     }
-  }, [instances, toast]);
+  }, [toast])
 
-  // Carregar instâncias ao montar o componente
+  // Adiciona função para buscar eventos recentes de uma instância
+  // Retorna últimos N eventos da tabela webhook_events, filtrando por nome da instância (api_key ou name)
+  // Uso: getRecentEvents(instance, 10)
+  const getRecentEvents = useCallback(async (targetInstance: WhatsAppInstance, limit: number = 10) => {
+    try {
+      const instanceName = targetInstance?.api_key || targetInstance?.name
+      if (!instanceName) return []
+      const { data, error } = await supabase
+        .from('webhook_events')
+        .select('*')
+        .eq('instance', instanceName)
+        .order('created_at', { ascending: false })
+        .limit(limit)
+
+      if (error) {
+        console.error('[Supabase] Erro ao buscar eventos recentes:', error.message)
+        return []
+      }
+      return data || []
+    } catch (e) {
+      console.error('[Supabase] Exceção ao buscar eventos recentes:', e)
+      return []
+    }
+  }, [])
+
+  // Realtime subscription: atualizar instâncias quando webhook atualizar o banco
   useEffect(() => {
-    loadInstances();
-  }, [loadInstances]);
+    if (isTestEnv) {
+      // Em ambiente de teste, evitamos criar canais realtime para prevenir atualizações fora do act()
+      return () => {
+        if (realtimeChannelRef.current) {
+          try { realtimeChannelRef.current.unsubscribe() } catch {}
+          realtimeChannelRef.current = null
+        }
+      }
+    }
+
+    let mounted = true
+    ;(async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      // Cancelar canal anterior se existir
+      if (realtimeChannelRef.current) {
+        try { await realtimeChannelRef.current.unsubscribe() } catch {}
+        realtimeChannelRef.current = null
+      }
+      const channel = supabase.channel('realtime:whatsapp_instances')
+      const filterKey = currentTenant?.id ? 'tenant_id' : 'user_id'
+      const filterValue = currentTenant?.id ?? user.id
+      channel.on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_instances', filter: `${filterKey}=eq.${filterValue}` }, payload => {
+        if (!mounted) return
+        setInstances(prev => {
+          const newRow = payload.new as WhatsAppInstance
+          const oldRow = payload.old as WhatsAppInstance
+          switch (payload.eventType) {
+            case 'INSERT':
+              if (prev.find(i => i.id === newRow.id)) return prev
+              return [newRow, ...prev]
+            case 'UPDATE':
+              return prev.map(i => i.id === newRow.id ? { ...i, ...newRow } : i)
+            case 'DELETE':
+              return prev.filter(i => i.id !== oldRow.id)
+            default:
+              return prev
+          }
+        })
+        // Toasters úteis para mudanças de status
+        const newStatus = (payload.new as any)?.status
+        const oldStatus = (payload.old as any)?.status
+        if (newStatus && newStatus !== oldStatus) {
+          if (newStatus === 'connected') {
+            toast({ title: 'Instância conectada', description: 'Webhook atualizou o status para conectado.' })
+          } else if (newStatus === 'connecting') {
+            toast({ title: 'Instância em conexão', description: 'Aguardando leitura do QR Code.' })
+          } else if (newStatus === 'disconnected') {
+            toast({ title: 'Instância desconectada' })
+          } else if (newStatus === 'error') {
+            toast({ title: 'Erro na instância', description: 'Verifique os logs.', variant: 'destructive' })
+          }
+        }
+      })
+      await channel.subscribe()
+      realtimeChannelRef.current = channel
+    })()
+    return () => {
+      mounted = false
+      if (realtimeChannelRef.current) {
+        try { realtimeChannelRef.current.unsubscribe() } catch {}
+        realtimeChannelRef.current = null
+      }
+    }
+  }, [toast, currentTenant?.id])
+
+  // Fallback polling: checar status a cada 15s para instâncias "connecting"
+  useEffect(() => {
+    if (isTestEnv) {
+      // Evitar timers em ambiente de teste
+      return () => {
+        if (pollingIntervalRef.current) {
+          window.clearInterval(pollingIntervalRef.current)
+          pollingIntervalRef.current = null
+        }
+      }
+    }
+
+    const hasConnecting = instances.some(i => i.status === 'connecting')
+    if (pollingIntervalRef.current) {
+      window.clearInterval(pollingIntervalRef.current)
+      pollingIntervalRef.current = null
+    }
+    if (hasConnecting) {
+      const intervalId = window.setInterval(() => {
+        instances.filter(i => i.status === 'connecting').forEach(i => {
+          checkConnectionStatus(i.id).catch(() => {})
+        })
+      }, 15000)
+      pollingIntervalRef.current = intervalId
+    }
+    return () => {
+      if (pollingIntervalRef.current) {
+        window.clearInterval(pollingIntervalRef.current)
+        pollingIntervalRef.current = null
+      }
+    }
+  }, [instances, checkConnectionStatus])
+
+  useEffect(() => {
+    if (isTestEnv) return
+    loadInstances()
+  }, [loadInstances])
 
   return {
-    // Estados
     instances,
-    connectionStatus,
+    loading,
     contacts,
     messages,
-    loading,
-    
-    // Ações de instância
+    loadInstances,
     createInstance,
     connect,
     disconnect,
     checkConnectionStatus,
     deleteInstance,
-    loadInstances,
-    
-    // Ações de mensagens e contatos
     fetchContacts,
     fetchMessages,
-    sendMessage
-  };
+    sendMessage,
+    getRecentEvents,
+  }
 }

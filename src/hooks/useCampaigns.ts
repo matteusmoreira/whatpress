@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { toast } from 'sonner'
+import { useCampaignEngine } from '@/hooks/useCampaignEngine'
+import { useTenant } from '@/hooks/useTenant'
 
 export interface Campaign {
   id: string
@@ -34,12 +36,16 @@ export interface CampaignStats {
 
 export function useCampaigns() {
   const { user } = useAuth()
+  const { currentTenant } = useTenant()
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [stats, setStats] = useState<CampaignStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
-  // Buscar campanhas do usuário
+  
+  // Engine actions from useCampaignEngine
+  const { startCampaign: engineStartCampaign, pauseCampaign: enginePauseCampaign, stopCampaign: engineStopCampaign } = useCampaignEngine()
+  
+  // Buscar campanhas do usuário/tenant com filtro compatível
   const fetchCampaigns = async () => {
     if (!user) return
 
@@ -47,21 +53,25 @@ export function useCampaigns() {
       setLoading(true)
       setError(null)
 
-      const { data, error } = await supabase
+      let query = supabase
         .from('campaigns')
-        .select(`
-          *,
-          whatsapp_instances!inner(name, phone_number),
-          message_templates(name, content)
-        `)
-        .eq('user_id', user.id)
+        .select('*')
         .order('created_at', { ascending: false })
+
+      if (currentTenant?.id) {
+        query = query.eq('tenant_id', currentTenant.id)
+      } else if (user?.id) {
+        // Compatibilidade com esquemas antigos
+        query = query.eq('user_id', user.id)
+      }
+
+      const { data, error } = await query
 
       if (error) throw error
 
       // Calcular estatísticas para cada campanha
       const campaignsWithStats = await Promise.all(
-        data.map(async (campaign) => {
+        (data || []).map(async (campaign) => {
           const stats = await getCampaignStats(campaign.id)
           return {
             ...campaign,
@@ -116,24 +126,40 @@ export function useCampaigns() {
 
     try {
       // Total de campanhas
-      const { count: totalCampaigns } = await supabase
+      let totalQuery = supabase
         .from('campaigns')
         .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
 
       // Campanhas ativas
-      const { count: activeCampaigns } = await supabase
+      let activeQuery = supabase
         .from('campaigns')
         .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
         .in('status', ['running', 'scheduled'])
 
+      if (currentTenant?.id) {
+        totalQuery = totalQuery.eq('tenant_id', currentTenant.id)
+        activeQuery = activeQuery.eq('tenant_id', currentTenant.id)
+      } else if (user?.id) {
+        // Compatibilidade com esquemas antigos
+        totalQuery = totalQuery.eq('user_id', user.id)
+        activeQuery = activeQuery.eq('user_id', user.id)
+      }
+
+      const { count: totalCampaigns } = await totalQuery
+      const { count: activeCampaigns } = await activeQuery
+
       // Total de mensagens enviadas
-      const { data: instances } = await supabase
+      let instancesQuery = supabase
         .from('whatsapp_instances')
         .select('id')
-        .eq('user_id', user.id)
 
+      if (currentTenant?.id) {
+        instancesQuery = instancesQuery.eq('tenant_id', currentTenant.id)
+      } else if (user?.id) {
+        instancesQuery = instancesQuery.eq('user_id', user.id)
+      }
+
+      const { data: instances } = await instancesQuery
       const instanceIds = instances?.map(i => i.id) || []
       
       let totalMessagesSent = 0
@@ -185,13 +211,18 @@ export function useCampaigns() {
     if (!user) throw new Error('Usuário não autenticado')
 
     try {
+      const payload: any = {
+        ...campaignData,
+        user_id: user.id,
+        status: 'draft'
+      }
+      if (currentTenant?.id) {
+        payload.tenant_id = currentTenant.id
+      }
+
       const { data, error } = await supabase
         .from('campaigns')
-        .insert([{
-          ...campaignData,
-          user_id: user.id,
-          status: 'draft'
-        }])
+        .insert([payload])
         .select()
         .single()
 
@@ -210,11 +241,18 @@ export function useCampaigns() {
   // Atualizar campanha
   const updateCampaign = async (id: string, updates: Partial<Campaign>) => {
     try {
-      const { error } = await supabase
+      let query = supabase
         .from('campaigns')
         .update(updates)
         .eq('id', id)
-        .eq('user_id', user?.id)
+
+      if (currentTenant?.id) {
+        query = query.eq('tenant_id', currentTenant.id)
+      } else if (user?.id) {
+        query = query.eq('user_id', user?.id)
+      }
+
+      const { error } = await query
 
       if (error) throw error
 
@@ -230,11 +268,18 @@ export function useCampaigns() {
   // Deletar campanha
   const deleteCampaign = async (id: string) => {
     try {
-      const { error } = await supabase
+      let query = supabase
         .from('campaigns')
         .delete()
         .eq('id', id)
-        .eq('user_id', user?.id)
+
+      if (currentTenant?.id) {
+        query = query.eq('tenant_id', currentTenant.id)
+      } else if (user?.id) {
+        query = query.eq('user_id', user?.id)
+      }
+
+      const { error } = await query
 
       if (error) throw error
 
@@ -250,13 +295,13 @@ export function useCampaigns() {
   // Iniciar campanha
   const startCampaign = async (id: string) => {
     try {
-      await updateCampaign(id, { 
-        status: 'running',
-        scheduled_at: new Date().toISOString()
-      })
-      toast.success('Campanha iniciada!')
+      const success = await engineStartCampaign(id)
+      if (success) {
+        await fetchCampaigns()
+      }
+      return success
     } catch (err: any) {
-      toast.error('Erro ao iniciar campanha')
+      console.error('Erro ao iniciar campanha:', err)
       throw err
     }
   }
@@ -264,10 +309,13 @@ export function useCampaigns() {
   // Pausar campanha
   const pauseCampaign = async (id: string) => {
     try {
-      await updateCampaign(id, { status: 'paused' })
-      toast.success('Campanha pausada!')
+      const success = await enginePauseCampaign(id)
+      if (success) {
+        await fetchCampaigns()
+      }
+      return success
     } catch (err: any) {
-      toast.error('Erro ao pausar campanha')
+      console.error('Erro ao pausar campanha:', err)
       throw err
     }
   }
@@ -275,13 +323,13 @@ export function useCampaigns() {
   // Parar campanha
   const stopCampaign = async (id: string) => {
     try {
-      await updateCampaign(id, { 
-        status: 'cancelled',
-        completed_at: new Date().toISOString()
-      })
-      toast.success('Campanha parada!')
+      const success = await engineStopCampaign(id)
+      if (success) {
+        await fetchCampaigns()
+      }
+      return success
     } catch (err: any) {
-      toast.error('Erro ao parar campanha')
+      console.error('Erro ao parar campanha:', err)
       throw err
     }
   }
@@ -310,7 +358,7 @@ export function useCampaigns() {
       fetchCampaigns()
       fetchStats()
     }
-  }, [user])
+  }, [user, currentTenant?.id])
 
   return {
     campaigns,

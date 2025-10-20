@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { toast } from 'sonner'
 import { format, subDays, startOfDay, endOfDay } from 'date-fns'
+import { useTenant } from '@/hooks/useTenant'
 
 export interface AnalyticsMetrics {
   totalMessages: number
@@ -65,6 +66,8 @@ export interface ExportOptions {
 
 export function useAnalytics() {
   const { user } = useAuth()
+  const { currentTenant } = useTenant()
+  const tenantId = currentTenant?.id
   const [metrics, setMetrics] = useState<AnalyticsMetrics | null>(null)
   const [messageVolumeData, setMessageVolumeData] = useState<MessageVolumeData[]>([])
   const [campaignPerformanceData, setCampaignPerformanceData] = useState<CampaignPerformanceData[]>([])
@@ -109,37 +112,53 @@ export function useAnalytics() {
       const { start, end } = getDateRange()
 
       // Fetch current period metrics
-      const { data: currentMessages } = await supabase
+      const msgsQuery = supabase
         .from('messages')
         .select('*')
-        .eq('user_id', user.id)
         .gte('created_at', start.toISOString())
         .lte('created_at', end.toISOString())
 
-      const { data: currentContacts } = await supabase
+      const currentMessagesRes = tenantId
+        ? await msgsQuery.eq('tenant_id', tenantId)
+        : await msgsQuery.eq('user_id', user.id)
+      const { data: currentMessages } = currentMessagesRes
+
+      const contactsQuery = supabase
         .from('contacts')
         .select('*')
-        .eq('user_id', user.id)
         .gte('last_interaction', start.toISOString())
+
+      const currentContactsRes = tenantId
+        ? await contactsQuery.eq('tenant_id', tenantId)
+        : await contactsQuery.eq('user_id', user.id)
+      const { data: currentContacts } = currentContactsRes
 
       // Calculate previous period for comparison
       const periodDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
       const prevStart = subDays(start, periodDays)
       const prevEnd = subDays(end, periodDays)
 
-      const { data: prevMessages } = await supabase
+      const prevMsgsQuery = supabase
         .from('messages')
         .select('*')
-        .eq('user_id', user.id)
         .gte('created_at', prevStart.toISOString())
         .lte('created_at', prevEnd.toISOString())
 
-      const { data: prevContacts } = await supabase
+      const prevMessagesRes = tenantId
+        ? await prevMsgsQuery.eq('tenant_id', tenantId)
+        : await prevMsgsQuery.eq('user_id', user.id)
+      const { data: prevMessages } = prevMessagesRes
+
+      const prevContactsQuery = supabase
         .from('contacts')
         .select('*')
-        .eq('user_id', user.id)
         .gte('last_interaction', prevStart.toISOString())
         .lte('last_interaction', prevEnd.toISOString())
+
+      const prevContactsRes = tenantId
+        ? await prevContactsQuery.eq('tenant_id', tenantId)
+        : await prevContactsQuery.eq('user_id', user.id)
+      const { data: prevContacts } = prevContactsRes
 
       // Calculate metrics
       const totalMessages = currentMessages?.length || 0
@@ -189,7 +208,7 @@ export function useAnalytics() {
     } finally {
       setLoading(false)
     }
-  }, [user, getDateRange])
+  }, [user, getDateRange, tenantId])
 
   // Fetch message volume data
   const fetchMessageVolumeData = useCallback(async () => {
@@ -198,13 +217,16 @@ export function useAnalytics() {
     try {
       const { start, end } = getDateRange()
       
-      const { data: messages } = await supabase
+      const msgsQuery = supabase
         .from('messages')
         .select('created_at, type')
-        .eq('user_id', user.id)
         .gte('created_at', start.toISOString())
         .lte('created_at', end.toISOString())
         .order('created_at')
+
+      const { data: messages } = tenantId
+        ? await msgsQuery.eq('tenant_id', tenantId)
+        : await msgsQuery.eq('user_id', user.id)
 
       // Group messages by date
       const volumeMap = new Map<string, { sent: number; received: number }>()
@@ -243,7 +265,7 @@ export function useAnalytics() {
     } catch (error) {
       console.error('Error fetching message volume data:', error)
     }
-  }, [user, getDateRange])
+  }, [user, getDateRange, tenantId])
 
   // Fetch campaign performance data
   const fetchCampaignPerformanceData = useCallback(async () => {
@@ -252,7 +274,7 @@ export function useAnalytics() {
     try {
       const { start, end } = getDateRange()
       
-      const { data: campaigns } = await supabase
+      const campaignsQuery = supabase
         .from('campaigns')
         .select(`
           *,
@@ -263,9 +285,12 @@ export function useAnalytics() {
             created_at
           )
         `)
-        .eq('user_id', user.id)
         .gte('created_at', start.toISOString())
         .lte('created_at', end.toISOString())
+
+      const { data: campaigns } = tenantId
+        ? await campaignsQuery.eq('tenant_id', tenantId)
+        : await campaignsQuery.eq('user_id', user.id)
 
       const performanceData: CampaignPerformanceData[] = campaigns?.map(campaign => {
         const messages = campaign.messages || []
@@ -289,17 +314,20 @@ export function useAnalytics() {
     } catch (error) {
       console.error('Error fetching campaign performance data:', error)
     }
-  }, [user, getDateRange])
+  }, [user, getDateRange, tenantId])
 
   // Fetch audience segment data
   const fetchAudienceSegmentData = useCallback(async () => {
     if (!user) return
 
     try {
-      const { data: contacts } = await supabase
+      const contactsQuery = supabase
         .from('contacts')
         .select('metadata')
-        .eq('user_id', user.id)
+
+      const { data: contacts } = tenantId
+        ? await contactsQuery.eq('tenant_id', tenantId)
+        : await contactsQuery.eq('user_id', user.id)
 
       // Simulate device and location segmentation
       const deviceData = [
@@ -323,7 +351,7 @@ export function useAnalytics() {
     } catch (error) {
       console.error('Error fetching audience segment data:', error)
     }
-  }, [user])
+  }, [user, tenantId])
 
   // Fetch response time data
   const fetchResponseTimeData = useCallback(async () => {
@@ -368,17 +396,23 @@ export function useAnalytics() {
     try {
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
       
-      const { data: recentMessages } = await supabase
+      const msgsQuery = supabase
         .from('messages')
         .select('id')
-        .eq('user_id', user.id)
         .gte('created_at', oneHourAgo.toISOString())
 
-      const { data: activeChats } = await supabase
+      const { data: recentMessages } = tenantId
+        ? await msgsQuery.eq('tenant_id', tenantId)
+        : await msgsQuery.eq('user_id', user.id)
+
+      const contactsQuery = supabase
         .from('contacts')
         .select('id')
-        .eq('user_id', user.id)
-        .gte('last_interaction', subDays(new Date(), 1).toISOString())
+        .gte('last_interaction', oneHourAgo.toISOString())
+
+      const { data: activeChats } = tenantId
+        ? await contactsQuery.eq('tenant_id', tenantId)
+        : await contactsQuery.eq('user_id', user.id)
 
       return {
         messagesLastHour: recentMessages?.length || 0,
@@ -396,7 +430,7 @@ export function useAnalytics() {
         onlineAgents: 0
       }
     }
-  }, [user])
+  }, [user, tenantId])
 
   // Update filters
   const updateFilters = useCallback((newFilters: Partial<AnalyticsFilters>) => {

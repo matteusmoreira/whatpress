@@ -48,9 +48,9 @@ export default function Login() {
     setIsSubmitting(true)
     
     try {
-      const result = await login(formData.email, formData.password)
+      const user = await login(formData.email, formData.password)
       
-      if (result?.user) {
+      if (user) {
         toast({
           title: "Login realizado com sucesso!",
           description: "Bem-vindo de volta à plataforma.",

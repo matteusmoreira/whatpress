@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
+import { useTenant } from '@/hooks/useTenant'
 
 export interface Template {
   id: string
@@ -24,6 +25,7 @@ export interface TemplateStats {
 
 export function useTemplates() {
   const { user } = useAuth()
+  const { currentTenant } = useTenant()
   const [templates, setTemplates] = useState<Template[]>([])
   const [stats, setStats] = useState<TemplateStats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -33,16 +35,32 @@ export function useTemplates() {
 
     try {
       setLoading(true)
+      // Preferir tenant_id quando disponível; fallback para user_id
+      let dataResp: any[] = []
       const { data, error } = await supabase
         .from('message_templates')
         .select('*')
-        .eq('user_id', user.id)
+        .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
         .order('created_at', { ascending: false })
 
-      if (error) throw error
+      if (error) {
+        if (currentTenant?.id) {
+          const fallback = await supabase
+            .from('message_templates')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+          if (fallback.error) throw fallback.error
+          dataResp = fallback.data || []
+        } else {
+          throw error
+        }
+      } else {
+        dataResp = data || []
+      }
 
       // Processar dados para garantir que variables seja um array
-      const processedData = (data || []).map(template => ({
+      const processedData = dataResp.map(template => ({
         ...template,
         variables: Array.isArray(template.variables) ? template.variables : [],
         usage_count: template.usage_count || 0
@@ -60,14 +78,28 @@ export function useTemplates() {
     if (!user) return
 
     try {
+      let dataResp: any[] = []
       const { data, error } = await supabase
         .from('message_templates')
         .select('id, category, is_active, usage_count')
-        .eq('user_id', user.id)
+        .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
 
-      if (error) throw error
+      if (error) {
+        if (currentTenant?.id) {
+          const fallback = await supabase
+            .from('message_templates')
+            .select('id, category, is_active, usage_count')
+            .eq('user_id', user.id)
+          if (fallback.error) throw fallback.error
+          dataResp = fallback.data || []
+        } else {
+          throw error
+        }
+      } else {
+        dataResp = data || []
+      }
 
-      const templates = data || []
+      const templates = dataResp || []
       const categories = [...new Set(templates.map(t => t.category))]
       
       // Encontrar template mais usado
@@ -89,46 +121,85 @@ export function useTemplates() {
   const createTemplate = async (templateData: Omit<Template, 'id' | 'created_at' | 'updated_at'>) => {
     if (!user) throw new Error('Usuário não autenticado')
 
-    const { data, error } = await supabase
-      .from('message_templates')
-      .insert([{
-        ...templateData,
-        user_id: user.id,
-        usage_count: 0
-      }])
-      .select()
-      .single()
+    // Tentar inserir com tenant_id quando disponível; fallback para schema legado
+    try {
+      const { data, error } = await supabase
+        .from('message_templates')
+        .insert([{ 
+          ...templateData, 
+          user_id: user.id, 
+          usage_count: 0,
+          ...(currentTenant?.id ? { tenant_id: currentTenant.id } : {})
+        }])
+        .select()
+        .single()
 
-    if (error) throw error
+      if (error) throw error
 
-    const processedData = {
-      ...data,
-      variables: Array.isArray(data.variables) ? data.variables : [],
-      usage_count: data.usage_count || 0
+      const processedData = {
+        ...data,
+        variables: Array.isArray(data.variables) ? data.variables : [],
+        usage_count: data.usage_count || 0
+      }
+
+      setTemplates(prev => [processedData, ...prev])
+      await fetchStats()
+      return processedData
+    } catch (err: any) {
+      // Fallback: tentar sem tenant_id
+      const fb = await supabase
+        .from('message_templates')
+        .insert([{ 
+          ...templateData, 
+          user_id: user.id, 
+          usage_count: 0
+        }])
+        .select()
+        .single()
+
+      if (fb.error) throw fb.error
+
+      const processedData = {
+        ...fb.data,
+        variables: Array.isArray(fb.data.variables) ? fb.data.variables : [],
+        usage_count: fb.data.usage_count || 0
+      }
+
+      setTemplates(prev => [processedData, ...prev])
+      await fetchStats()
+      return processedData
     }
-
-    setTemplates(prev => [processedData, ...prev])
-    await fetchStats()
-    return processedData
   }
 
   const updateTemplate = async (id: string, updates: Partial<Template>) => {
     if (!user) throw new Error('Usuário não autenticado')
 
-    const { data, error } = await supabase
-      .from('message_templates')
-      .update(updates)
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .select()
-      .single()
+    // Atualizar com filtro por tenant quando disponível; fallback para user_id
+    let updated: any = null
+    const base = supabase.from('message_templates').update(updates).eq('id', id)
+    const withFilter = currentTenant?.id ? base.eq('tenant_id', currentTenant.id) : base.eq('user_id', user.id)
+    const { data, error } = await withFilter.select().single()
 
-    if (error) throw error
+    if (error && currentTenant?.id) {
+      const fb = await supabase
+        .from('message_templates')
+        .update(updates)
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .select()
+        .single()
+      if (fb.error) throw fb.error
+      updated = fb.data
+    } else if (error) {
+      throw error
+    } else {
+      updated = data
+    }
 
     const processedData = {
-      ...data,
-      variables: Array.isArray(data.variables) ? data.variables : [],
-      usage_count: data.usage_count || 0
+      ...updated,
+      variables: Array.isArray(updated.variables) ? updated.variables : [],
+      usage_count: updated.usage_count || 0
     }
 
     setTemplates(prev => prev.map(template => 
@@ -141,13 +212,20 @@ export function useTemplates() {
   const deleteTemplate = async (id: string) => {
     if (!user) throw new Error('Usuário não autenticado')
 
-    const { error } = await supabase
-      .from('message_templates')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', user.id)
+    const base = supabase.from('message_templates').delete().eq('id', id)
+    const withFilter = currentTenant?.id ? base.eq('tenant_id', currentTenant.id) : base.eq('user_id', user.id)
+    const { error } = await withFilter
 
-    if (error) throw error
+    if (error && currentTenant?.id) {
+      const fb = await supabase
+        .from('message_templates')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id)
+      if (fb.error) throw fb.error
+    } else if (error) {
+      throw error
+    }
 
     setTemplates(prev => prev.filter(template => template.id !== id))
     await fetchStats()
@@ -221,7 +299,8 @@ export function useTemplates() {
       fetchTemplates()
       fetchStats()
     }
-  }, [user])
+    // Recarregar ao trocar o tenant
+  }, [user, currentTenant?.id])
 
   return {
     templates,

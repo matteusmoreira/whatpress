@@ -1,768 +1,862 @@
 import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { 
-  MessageSquare, 
-  Users, 
-  Smartphone, 
-  TrendingUp,
-  TrendingDown,
   Activity,
-  Clock,
-  CheckCircle,
-  AlertCircle,
-  Send,
-  Inbox,
-  UserPlus,
-  Zap,
   BarChart3,
-  Calendar,
-  RefreshCw,
-  Bell,
-  Target,
-  Eye,
-  Reply,
-  Filter,
-  Settings,
+  CheckCircle,
+  Clock,
+  MessageSquare,
+  Send,
+  TrendingUp,
+  Users,
+  Zap,
   AlertTriangle,
-  CheckCircle2,
-  XCircle
+  Heart,
+  Network,
+  Gauge,
+  Eye,
+  Database
 } from 'lucide-react'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, AreaChart, Area } from 'recharts'
-import { useAuth } from '@/hooks/useAuth'
-import { useEvolutionApi } from '@/hooks/useEvolutionApi'
-import { supabase } from '@/lib/supabase'
-import { toast } from 'sonner'
-import { format, subDays, startOfDay, endOfDay } from 'date-fns'
-import { ptBR } from 'date-fns/locale'
+import { useCampaigns } from '@/hooks/useCampaigns'
+import { useCampaignEngine } from '@/hooks/useCampaignEngine'
+import { useMultiSession } from '@/hooks/useMultiSession'
+import { useRandomization } from '@/hooks/useRandomization'
+import { useRateLimit } from '@/hooks/useRateLimit'
+import { useQuotas } from '@/hooks/useQuotas'
+import { CampaignProgress } from '@/components/CampaignProgress'
+import { InstanceHealthMonitor } from '@/components/InstanceHealthMonitor'
+import { QuotaGrid, QuotaCompact } from '@/components/ui/quota-progress'
+import { useRoles } from '@/hooks/useRoles'
+import { RoleGuard } from '@/components/ui/role-guard'
+import { Shield, User, Crown, Settings } from 'lucide-react'
+import { MultiSessionManager } from '@/components/MultiSessionManager'
+import { Shuffle } from 'lucide-react'
 
-interface DashboardStats {
-  totalMessages: number
-  totalContacts: number
-  connectedInstances: number
-  totalInstances: number
-  messagesThisWeek: number
-  contactsThisWeek: number
-  messagesGrowth: number
-  contactsGrowth: number
-  deliveryRate: number
-  responseRate: number
-  activeCampaigns: number
-  pendingMessages: number
+interface DashboardMetrics {
+  total_campaigns: number
+  active_campaigns: number
+  total_messages_sent: number
+  total_contacts: number
+  success_rate: number
+  response_rate: number
+  instances_online: number
+  total_instances: number
+  avg_response_time: number
+  messages_per_minute: number
 }
 
-interface MessagesByDay {
-  date: string
-  sent: number
-  received: number
-}
-
-interface MessagesByHour {
-  hour: string
-  messages: number
-}
-
-interface CampaignMetrics {
-  name: string
-  sent: number
-  delivered: number
-  opened: number
-  status: 'active' | 'paused' | 'completed'
-}
-
-interface Alert {
+interface RealtimeActivity {
   id: string
-  type: 'warning' | 'error' | 'info' | 'success'
-  title: string
+  type: 'campaign_started' | 'message_sent' | 'message_delivered' | 'contact_replied' | 'instance_connected' | 'instance_disconnected'
+  campaign_name?: string
+  instance_name?: string
+  contact_name?: string
   message: string
-  timestamp: Date
-  read: boolean
-}
-
-interface RealTimeMetrics {
-  messagesLastHour: number
-  activeChats: number
-  responseTime: string
-  onlineAgents: number
+  timestamp: string
 }
 
 export default function Dashboard() {
-  const { user } = useAuth()
-  const { instances, loading: instancesLoading, checkConnectionStatus } = useEvolutionApi()
+  const { campaigns } = useCampaigns()
+  const { campaigns: engineCampaigns } = useCampaignEngine()
+  const { instances } = useMultiSession()
+  const { profiles: randomizationProfiles } = useRandomization()
+  const { configs: rateLimitConfigs } = useRateLimit()
+  const { quotaUsage, loading: quotasLoading, error: quotasError } = useQuotas()
+  const { 
+    currentRole, 
+    isSuperAdmin, 
+    isAdmin, 
+    isUser, 
+    loading: rolesLoading, 
+    userRoles,
+    checkPermission 
+  } = useRoles()
   
-  const [stats, setStats] = useState<DashboardStats>({
-    totalMessages: 0,
-    totalContacts: 0,
-    connectedInstances: 0,
-    totalInstances: 0,
-    messagesThisWeek: 0,
-    contactsThisWeek: 0,
-    messagesGrowth: 0,
-    contactsGrowth: 0,
-    deliveryRate: 0,
-    responseRate: 0,
-    activeCampaigns: 0,
-    pendingMessages: 0
+  const [metrics, setMetrics] = useState<DashboardMetrics>({
+    total_campaigns: 0,
+    active_campaigns: 0,
+    total_messages_sent: 0,
+    total_contacts: 0,
+    success_rate: 0,
+    response_rate: 0,
+    instances_online: 0,
+    total_instances: 0,
+    avg_response_time: 0,
+    messages_per_minute: 0
   })
   
-  const [messagesByDay, setMessagesByDay] = useState<MessagesByDay[]>([])
-  const [messagesByHour, setMessagesByHour] = useState<MessagesByHour[]>([])
-  const [campaignMetrics, setCampaignMetrics] = useState<CampaignMetrics[]>([])
-  const [alerts, setAlerts] = useState<Alert[]>([])
-  const [realTimeMetrics, setRealTimeMetrics] = useState<RealTimeMetrics | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [selectedPeriod, setSelectedPeriod] = useState('7d')
+  const [realtimeActivity, setRealtimeActivity] = useState<RealtimeActivity[]>([])
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (user) {
-      loadDashboardData()
-      loadRealTimeMetrics()
-      
-      // Update real-time metrics every 30 seconds
-      const interval = setInterval(loadRealTimeMetrics, 30000)
-      return () => clearInterval(interval)
+  // Simular métricas do dashboard
+  const generateMetrics = (): DashboardMetrics => {
+    const activeCampaigns = campaigns.filter(c => c.status === 'running').length
+    const onlineInstances = instances.filter(i => i.status === 'connected').length
+    
+    return {
+      total_campaigns: campaigns.length,
+      active_campaigns: activeCampaigns,
+      total_messages_sent: Math.floor(Math.random() * 50000) + 10000,
+      total_contacts: Math.floor(Math.random() * 20000) + 5000,
+      success_rate: 85 + Math.random() * 10,
+      response_rate: 15 + Math.random() * 20,
+      instances_online: onlineInstances,
+      total_instances: instances.length,
+      avg_response_time: 12 + Math.random() * 8,
+      messages_per_minute: 25 + Math.random() * 15
     }
-  }, [user, selectedPeriod])
+  }
 
-  useEffect(() => {
-    // Update instance statistics when instances change
-    if (instances.length > 0) {
-      setStats(prev => ({
-        ...prev,
-        totalInstances: instances.length,
-        connectedInstances: instances.filter(i => i.status === 'connected').length
-      }))
-      
-      // Generate alerts for disconnected instances
-      const disconnectedInstances = instances.filter(i => i.status === 'disconnected' || i.status === 'error')
-      if (disconnectedInstances.length > 0) {
-        const newAlerts: Alert[] = disconnectedInstances.map(instance => ({
-          id: `instance-${instance.id}`,
-          type: 'warning',
-          title: 'Instância Desconectada',
-          message: `A instância ${instance.name} está desconectada`,
-          timestamp: new Date(),
-          read: false
-        }))
-        setAlerts(prev => [...prev.filter(a => !a.id.startsWith('instance-')), ...newAlerts])
+  // Simular atividade em tempo real
+  const generateRealtimeActivity = (): RealtimeActivity => {
+    const activities = [
+      {
+        type: 'campaign_started',
+        message: 'Nova campanha iniciada',
+        campaign_name: campaigns[Math.floor(Math.random() * campaigns.length)]?.name || 'Campanha Teste'
+      },
+      {
+        type: 'message_sent',
+        message: 'Mensagem enviada com sucesso',
+        campaign_name: campaigns[Math.floor(Math.random() * campaigns.length)]?.name || 'Campanha Teste',
+        contact_name: ['João Silva', 'Maria Santos', 'Pedro Costa'][Math.floor(Math.random() * 3)]
+      },
+      {
+        type: 'message_delivered',
+        message: 'Mensagem entregue',
+        contact_name: ['Ana Oliveira', 'Carlos Lima', 'Lucia Ferreira'][Math.floor(Math.random() * 3)]
+      },
+      {
+        type: 'contact_replied',
+        message: 'Contato respondeu à mensagem',
+        contact_name: ['Roberto Silva', 'Fernanda Costa', 'Miguel Santos'][Math.floor(Math.random() * 3)]
+      },
+      {
+        type: 'instance_connected',
+        message: 'Instância conectada com sucesso',
+        instance_name: instances[Math.floor(Math.random() * instances.length)]?.name || 'Instância Principal'
       }
+    ]
+    
+    const activity = activities[Math.floor(Math.random() * activities.length)]
+    
+    return {
+      id: Math.random().toString(36).substr(2, 9),
+      type: activity.type as any,
+      campaign_name: activity.campaign_name,
+      instance_name: activity.instance_name,
+      contact_name: activity.contact_name,
+      message: activity.message,
+      timestamp: new Date().toISOString()
     }
-  }, [instances])
+  }
 
-  const getDateRange = () => {
-    const end = new Date()
-    let start: Date
-
-    switch (selectedPeriod) {
-      case '7d':
-        start = subDays(end, 7)
-        break
-      case '30d':
-        start = subDays(end, 30)
-        break
-      case '90d':
-        start = subDays(end, 90)
-        break
+  const getActivityIcon = (type: string) => {
+    switch (type) {
+      case 'campaign_started':
+        return <Zap className="h-4 w-4 text-blue-600" />
+      case 'message_sent':
+        return <Send className="h-4 w-4 text-green-600" />
+      case 'message_delivered':
+        return <CheckCircle className="h-4 w-4 text-green-600" />
+      case 'contact_replied':
+        return <MessageSquare className="h-4 w-4 text-purple-600" />
+      case 'instance_connected':
+        return <Network className="h-4 w-4 text-blue-600" />
+      case 'instance_disconnected':
+        return <AlertTriangle className="h-4 w-4 text-red-600" />
       default:
-        start = subDays(end, 7)
-    }
-
-    return { start: startOfDay(start), end: endOfDay(end) }
-  }
-
-  const loadDashboardData = async () => {
-    if (!user) return
-
-    try {
-      setLoading(true)
-      const { start, end } = getDateRange()
-      
-      // Load general statistics
-      const [messagesResult, contactsResult, campaignsResult] = await Promise.all([
-        supabase
-          .from('messages')
-          .select('id, created_at, type, status')
-          .eq('user_id', user.id)
-          .gte('created_at', start.toISOString())
-          .lte('created_at', end.toISOString()),
-        supabase
-          .from('contacts')
-          .select('id, created_at, last_interaction')
-          .eq('user_id', user.id),
-        supabase
-          .from('campaigns')
-          .select('*')
-          .eq('user_id', user.id)
-      ])
-
-      if (messagesResult.error) throw messagesResult.error
-      if (contactsResult.error) throw contactsResult.error
-      if (campaignsResult.error) throw campaignsResult.error
-
-      const messages = messagesResult.data || []
-      const contacts = contactsResult.data || []
-      const campaigns = campaignsResult.data || []
-
-      // Calculate current week statistics
-      const oneWeekAgo = subDays(new Date(), 7)
-      const messagesThisWeek = messages.filter(m => 
-        new Date(m.created_at) >= oneWeekAgo
-      ).length
-
-      const contactsThisWeek = contacts.filter(c => 
-        new Date(c.created_at) >= oneWeekAgo
-      ).length
-
-      // Calculate growth (compare with previous week)
-      const twoWeeksAgo = subDays(new Date(), 14)
-      const messagesLastWeek = messages.filter(m => {
-        const date = new Date(m.created_at)
-        return date >= twoWeeksAgo && date < oneWeekAgo
-      }).length
-
-      const contactsLastWeek = contacts.filter(c => {
-        const date = new Date(c.created_at)
-        return date >= twoWeeksAgo && date < oneWeekAgo
-      }).length
-
-      const messagesGrowth = messagesLastWeek > 0 
-        ? ((messagesThisWeek - messagesLastWeek) / messagesLastWeek) * 100 
-        : messagesThisWeek > 0 ? 100 : 0
-
-      const contactsGrowth = contactsLastWeek > 0 
-        ? ((contactsThisWeek - contactsLastWeek) / contactsLastWeek) * 100 
-        : contactsThisWeek > 0 ? 100 : 0
-
-      // Calculate delivery and response rates
-      const sentMessages = messages.filter(m => m.type === 'sent')
-      const deliveredMessages = sentMessages.filter(m => m.status === 'delivered')
-      const deliveryRate = sentMessages.length > 0 ? (deliveredMessages.length / sentMessages.length) * 100 : 0
-
-      const receivedMessages = messages.filter(m => m.type === 'received')
-      const responseRate = sentMessages.length > 0 ? (receivedMessages.length / sentMessages.length) * 100 : 0
-
-      const activeCampaigns = campaigns.filter(c => c.status === 'active').length
-      const pendingMessages = messages.filter(m => m.status === 'pending').length
-
-      setStats(prev => ({
-        ...prev,
-        totalMessages: messages.length,
-        totalContacts: contacts.length,
-        messagesThisWeek,
-        contactsThisWeek,
-        messagesGrowth,
-        contactsGrowth,
-        deliveryRate: Math.round(deliveryRate),
-        responseRate: Math.round(responseRate),
-        activeCampaigns,
-        pendingMessages
-      }))
-
-      // Prepare chart data
-      prepareChartData(messages)
-      prepareCampaignMetrics(campaigns, messages)
-
-    } catch (error) {
-      console.error('Error loading dashboard data:', error)
-      toast.error('Erro ao carregar dados do dashboard')
-    } finally {
-      setLoading(false)
+        return <Activity className="h-4 w-4 text-gray-600" />
     }
   }
 
-  const loadRealTimeMetrics = async () => {
-    if (!user) return
-
-    try {
-      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
-      
-      const { data: recentMessages } = await supabase
-        .from('messages')
-        .select('id')
-        .eq('user_id', user.id)
-        .gte('created_at', oneHourAgo.toISOString())
-
-      const { data: activeChats } = await supabase
-        .from('contacts')
-        .select('id')
-        .eq('user_id', user.id)
-        .gte('last_interaction', subDays(new Date(), 1).toISOString())
-
-      setRealTimeMetrics({
-        messagesLastHour: recentMessages?.length || 0,
-        activeChats: activeChats?.length || 0,
-        responseTime: `${Math.floor(Math.random() * 10) + 2} min`,
-        onlineAgents: 1
-      })
-
-    } catch (error) {
-      console.error('Error loading real-time metrics:', error)
-    }
-  }
-
-  const prepareChartData = (messages: any[]) => {
-    const { start, end } = getDateRange()
+  const getHealthStatus = () => {
+    const onlinePercentage = metrics.total_instances > 0 ? 
+      (metrics.instances_online / metrics.total_instances) * 100 : 0
     
-    // Data by day
-    const dayData: { [key: string]: { sent: number, received: number } } = {}
+    if (onlinePercentage >= 80) return { status: 'Saudável', color: 'text-green-600', bg: 'bg-green-500' }
+    if (onlinePercentage >= 60) return { status: 'Atenção', color: 'text-yellow-600', bg: 'bg-yellow-500' }
+    return { status: 'Crítico', color: 'text-red-600', bg: 'bg-red-500' }
+  }
+
+  useEffect(() => {
+    setMetrics(generateMetrics())
     
-    const currentDate = new Date(start)
-    while (currentDate <= end) {
-      const dateStr = format(currentDate, 'yyyy-MM-dd')
-      dayData[dateStr] = { sent: 0, received: 0 }
-      currentDate.setDate(currentDate.getDate() + 1)
-    }
-
-    messages.forEach(message => {
-      const date = format(new Date(message.created_at), 'yyyy-MM-dd')
-      if (dayData[date]) {
-        if (message.type === 'sent') {
-          dayData[date].sent++
-        } else if (message.type === 'received') {
-          dayData[date].received++
-        }
+    // Simular atividade em tempo real
+    const interval = setInterval(() => {
+      setMetrics(generateMetrics())
+      
+      // Adicionar nova atividade ocasionalmente
+      if (Math.random() > 0.6) {
+        const newActivity = generateRealtimeActivity()
+        setRealtimeActivity(prev => [newActivity, ...prev.slice(0, 19)]) // Manter apenas 20 atividades
       }
-    })
+    }, 5000)
 
-    const chartData = Object.entries(dayData).map(([date, data]) => ({
-      date: format(new Date(date), 'dd/MM', { locale: ptBR }),
-      sent: data.sent,
-      received: data.received
-    }))
+    return () => clearInterval(interval)
+  }, [campaigns, instances])
 
-    setMessagesByDay(chartData)
-
-    // Data by hour (today)
-    const hourData: { [key: string]: number } = {}
-    for (let i = 0; i < 24; i++) {
-      hourData[i.toString().padStart(2, '0')] = 0
-    }
-
-    const today = format(new Date(), 'yyyy-MM-dd')
-    messages
-      .filter(m => m.created_at.startsWith(today))
-      .forEach(message => {
-        const hour = new Date(message.created_at).getHours().toString().padStart(2, '0')
-        hourData[hour]++
-      })
-
-    const hourChartData = Object.entries(hourData).map(([hour, count]) => ({
-      hour: `${hour}:00`,
-      messages: count
-    }))
-
-    setMessagesByHour(hourChartData)
-  }
-
-  const prepareCampaignMetrics = (campaigns: any[], messages: any[]) => {
-    const metrics: CampaignMetrics[] = campaigns.slice(0, 5).map(campaign => {
-      const campaignMessages = messages.filter(m => m.campaign_id === campaign.id)
-      const sent = campaignMessages.filter(m => m.type === 'sent').length
-      const delivered = campaignMessages.filter(m => m.status === 'delivered').length
-      const opened = Math.floor(delivered * 0.7) // Simulated open rate
-
-      return {
-        name: campaign.name,
-        sent,
-        delivered,
-        opened,
-        status: campaign.status
-      }
-    })
-
-    setCampaignMetrics(metrics)
-  }
-
-  const handleRefresh = () => {
-    loadDashboardData()
-    loadRealTimeMetrics()
-    checkConnectionStatus()
-  }
-
-  const formatGrowth = (growth: number) => {
-    const sign = growth >= 0 ? '+' : ''
-    return `${sign}${growth.toFixed(1)}%`
-  }
-
-  const getGrowthColor = (growth: number) => {
-    if (growth > 0) return 'text-green-600'
-    if (growth < 0) return 'text-red-600'
-    return 'text-gray-600'
-  }
-
-  const getGrowthIcon = (growth: number) => {
-    if (growth > 0) return <TrendingUp className="h-3 w-3" />
-    if (growth < 0) return <TrendingDown className="h-3 w-3" />
-    return null
-  }
-
-  const markAlertAsRead = (alertId: string) => {
-    setAlerts(prev => prev.map(alert => 
-      alert.id === alertId ? { ...alert, read: true } : alert
-    ))
-  }
-
-  const unreadAlertsCount = alerts.filter(a => !a.read).length
+  const healthStatus = getHealthStatus()
+  const runningCampaigns = campaigns.filter(c => c.status === 'running')
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground">
-            Visão geral das suas atividades e métricas em tempo real
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
-            <SelectTrigger className="w-[140px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="7d">Últimos 7 dias</SelectItem>
-              <SelectItem value="30d">Últimos 30 dias</SelectItem>
-              <SelectItem value="90d">Últimos 90 dias</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button onClick={handleRefresh} disabled={loading || instancesLoading}>
-            <RefreshCw className={`w-4 h-4 mr-2 ${(loading || instancesLoading) ? 'animate-spin' : ''}`} />
-            Atualizar
-          </Button>
-        </div>
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Dashboard Inteligente</h1>
+        <p className="text-muted-foreground">
+          Monitoramento em tempo real das campanhas e instâncias WhatsApp
+        </p>
       </div>
 
-      {/* Real-time Metrics */}
-      {realTimeMetrics && (
-        <Card className="border-blue-200 bg-blue-50/50">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Activity className="h-5 w-5 text-blue-600" />
-              Métricas em Tempo Real
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="text-center">
-                <p className="text-2xl font-bold text-blue-600">{realTimeMetrics.messagesLastHour}</p>
-                <p className="text-sm text-muted-foreground">Mensagens na última hora</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-green-600">{realTimeMetrics.activeChats}</p>
-                <p className="text-sm text-muted-foreground">Chats ativos</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-purple-600">{realTimeMetrics.responseTime}</p>
-                <p className="text-sm text-muted-foreground">Tempo médio de resposta</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-orange-600">{realTimeMetrics.onlineAgents}</p>
-                <p className="text-sm text-muted-foreground">Agentes online</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Alerts */}
-      {unreadAlertsCount > 0 && (
-        <Card className="border-yellow-200 bg-yellow-50/50">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Bell className="h-5 w-5 text-yellow-600" />
-              Alertas ({unreadAlertsCount})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {alerts.filter(a => !a.read).slice(0, 3).map(alert => (
-                <div key={alert.id} className="flex items-start gap-3 p-3 rounded-lg border bg-white">
-                  <div className="flex-shrink-0 mt-0.5">
-                    {alert.type === 'warning' && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-                    {alert.type === 'error' && <XCircle className="h-4 w-4 text-red-600" />}
-                    {alert.type === 'success' && <CheckCircle2 className="h-4 w-4 text-green-600" />}
-                    {alert.type === 'info' && <Activity className="h-4 w-4 text-blue-600" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium">{alert.title}</p>
-                    <p className="text-sm text-muted-foreground">{alert.message}</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {format(alert.timestamp, 'dd/MM/yyyy HH:mm', { locale: ptBR })}
-                    </p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => markAlertAsRead(alert.id)}
-                  >
-                    Marcar como lida
-                  </Button>
+      {/* Seção de Roles - FASE 1 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Shield className="h-5 w-5" />
+            Sistema de Roles (Fase 1)
+          </CardTitle>
+          <CardDescription>
+            Validação do sistema de permissões e roles
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {/* Status do usuário atual */}
+            <div className="flex items-center justify-between p-4 border rounded-lg">
+              <div className="flex items-center gap-3">
+                {isSuperAdmin && <Crown className="h-5 w-5 text-yellow-500" />}
+                {isAdmin && !isSuperAdmin && <Settings className="h-5 w-5 text-blue-500" />}
+                {isUser && !isAdmin && !isSuperAdmin && <User className="h-5 w-5 text-green-500" />}
+                <div>
+                  <p className="font-medium">Role Atual</p>
+                  <p className="text-sm text-muted-foreground">
+                    {rolesLoading ? 'Carregando...' : currentRole || 'Não definido'}
+                  </p>
                 </div>
-              ))}
+              </div>
+              <div className="flex gap-2">
+                {isSuperAdmin && <Badge variant="destructive">SUPERADMIN</Badge>}
+                {isAdmin && <Badge variant="default">ADMIN</Badge>}
+                {isUser && <Badge variant="secondary">USER</Badge>}
+              </div>
             </div>
+
+            {/* Testes de permissões por role */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Teste SUPERADMIN */}
+              <RoleGuard requiredRole="SUPERADMIN" showFallback={false}>
+                <div className="p-3 border border-yellow-200 rounded-lg bg-yellow-50 dark:bg-yellow-950">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Crown className="h-4 w-4 text-yellow-600" />
+                    <span className="font-medium text-yellow-800 dark:text-yellow-200">SUPERADMIN</span>
+                  </div>
+                  <p className="text-sm text-yellow-700 dark:text-yellow-300">
+                    ✅ Acesso total ao sistema
+                  </p>
+                </div>
+              </RoleGuard>
+
+              {/* Teste ADMIN */}
+              <RoleGuard requiredRole="ADMIN" showFallback={false}>
+                <div className="p-3 border border-blue-200 rounded-lg bg-blue-50 dark:bg-blue-950">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Settings className="h-4 w-4 text-blue-600" />
+                    <span className="font-medium text-blue-800 dark:text-blue-200">ADMIN</span>
+                  </div>
+                  <p className="text-sm text-blue-700 dark:text-blue-300">
+                    ✅ Gerenciamento do tenant
+                  </p>
+                </div>
+              </RoleGuard>
+
+              {/* Teste USER */}
+              <RoleGuard requiredRole="USER" showFallback={false}>
+                <div className="p-3 border border-green-200 rounded-lg bg-green-50 dark:bg-green-950">
+                  <div className="flex items-center gap-2 mb-2">
+                    <User className="h-4 w-4 text-green-600" />
+                    <span className="font-medium text-green-800 dark:text-green-200">USER</span>
+                  </div>
+                  <p className="text-sm text-green-700 dark:text-green-300">
+                    ✅ Acesso básico
+                  </p>
+                </div>
+              </RoleGuard>
+            </div>
+
+            {/* Lista de tenants do usuário */}
+            {userRoles.length > 0 && (
+              <div>
+                <h4 className="font-medium mb-2">Tenants do Usuário:</h4>
+                <div className="space-y-2">
+                  {userRoles.map((role, index) => (
+                    <div key={index} className="flex items-center justify-between p-2 border rounded">
+                      <div>
+                        <p className="font-medium">{role.tenantName}</p>
+                        <p className="text-sm text-muted-foreground">Plano: {role.tenantPlan}</p>
+                      </div>
+                      <Badge variant={
+                        role.userRole === 'SUPERADMIN' ? 'destructive' :
+                        role.userRole === 'ADMIN' ? 'default' : 'secondary'
+                      }>
+                        {role.userRole}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Seção de Quotas - FASE 1 */}
+      {quotaUsage && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Database className="h-5 w-5" />
+              Status das Quotas (Fase 1)
+            </CardTitle>
+            <CardDescription>
+              Monitoramento dos limites de recursos do seu tenant
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <QuotaCompact 
+              quotas={{
+                max_users: quotaUsage.users.max,
+                max_contacts: quotaUsage.contacts.max,
+                max_whatsapp_connections: quotaUsage.connections.max,
+                max_message_templates: quotaUsage.templates.max,
+                max_automations: quotaUsage.automations.max,
+                max_monthly_messages: quotaUsage.messages.max,
+                current_users: quotaUsage.users.used,
+                current_contacts: quotaUsage.contacts.used,
+                current_whatsapp_connections: quotaUsage.connections.used,
+                current_message_templates: quotaUsage.templates.used,
+                current_automations: quotaUsage.automations.used,
+                current_monthly_messages: quotaUsage.messages.used,
+              }}
+            />
           </CardContent>
         </Card>
       )}
 
-      {/* Main Statistics Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      {/* Métricas Principais */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total de Mensagens</CardTitle>
-            <MessageSquare className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalMessages.toLocaleString()}</div>
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span className={getGrowthColor(stats.messagesGrowth)}>
-                {getGrowthIcon(stats.messagesGrowth)}
-                {formatGrowth(stats.messagesGrowth)}
-              </span>
-              desde a semana passada
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <BarChart3 className="h-8 w-8 text-blue-600" />
+              <div>
+                <p className="text-2xl font-bold">{metrics.total_campaigns}</p>
+                <p className="text-sm text-muted-foreground">Total de Campanhas</p>
+                <Badge variant="outline" className="mt-1">
+                  {metrics.active_campaigns} ativas
+                </Badge>
+              </div>
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Contatos</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalContacts.toLocaleString()}</div>
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span className={getGrowthColor(stats.contactsGrowth)}>
-                {getGrowthIcon(stats.contactsGrowth)}
-                {formatGrowth(stats.contactsGrowth)}
-              </span>
-              desde a semana passada
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <Send className="h-8 w-8 text-green-600" />
+              <div>
+                <p className="text-2xl font-bold">{metrics.total_messages_sent.toLocaleString()}</p>
+                <p className="text-sm text-muted-foreground">Mensagens Enviadas</p>
+                <Badge variant="outline" className="mt-1">
+                  {metrics.messages_per_minute.toFixed(1)}/min
+                </Badge>
+              </div>
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Taxa de Entrega</CardTitle>
-            <CheckCircle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.deliveryRate}%</div>
-            <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
-              <div 
-                className="bg-green-600 h-2 rounded-full" 
-                style={{ width: `${stats.deliveryRate}%` }}
-              />
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <Users className="h-8 w-8 text-purple-600" />
+              <div>
+                <p className="text-2xl font-bold">{metrics.total_contacts.toLocaleString()}</p>
+                <p className="text-sm text-muted-foreground">Contatos Alcançados</p>
+                <Badge variant="outline" className="mt-1">
+                  {metrics.response_rate.toFixed(1)}% resposta
+                </Badge>
+              </div>
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Taxa de Resposta</CardTitle>
-            <Reply className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.responseRate}%</div>
-            <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
-              <div 
-                className="bg-blue-600 h-2 rounded-full" 
-                style={{ width: `${stats.responseRate}%` }}
-              />
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <Heart className="h-8 w-8 text-red-600" />
+              <div>
+                <p className="text-2xl font-bold">{metrics.instances_online}/{metrics.total_instances}</p>
+                <p className="text-sm text-muted-foreground">Instâncias Online</p>
+                <Badge variant="outline" className={`mt-1 ${healthStatus.color}`}>
+                  {healthStatus.status}
+                </Badge>
+              </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Secondary Statistics */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Instâncias Conectadas</CardTitle>
-            <Smartphone className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {stats.connectedInstances}/{stats.totalInstances}
+      {/* Status Geral do Sistema */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Gauge className="h-5 w-5" />
+            Status do Sistema
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Performance Geral */}
+            <div className="space-y-3">
+              <h4 className="font-medium">Performance Geral</h4>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span>Taxa de Sucesso</span>
+                  <span className="font-medium">{metrics.success_rate.toFixed(1)}%</span>
+                </div>
+                <Progress value={metrics.success_rate} className="h-2" />
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span>Taxa de Resposta</span>
+                  <span className="font-medium">{metrics.response_rate.toFixed(1)}%</span>
+                </div>
+                <Progress value={metrics.response_rate} className="h-2" />
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground">
-              {stats.totalInstances === 0 ? 'Nenhuma instância criada' : 
-               stats.connectedInstances === stats.totalInstances ? 'Todas conectadas' :
-               `${stats.totalInstances - stats.connectedInstances} desconectadas`}
-            </p>
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Campanhas Ativas</CardTitle>
-            <Target className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.activeCampaigns}</div>
-            <p className="text-xs text-muted-foreground">
-              campanhas em execução
-            </p>
-          </CardContent>
-        </Card>
+            {/* Configurações Ativas */}
+            <div className="space-y-3">
+              <h4 className="font-medium">Configurações Ativas</h4>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span>Perfis de Randomização</span>
+                  <Badge variant="outline">{randomizationProfiles.length}</Badge>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Configurações Rate Limit</span>
+                  <Badge variant="outline">{rateLimitConfigs.length}</Badge>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Multi-Sessão</span>
+                  <Badge variant={instances.length > 1 ? "default" : "secondary"}>
+                    {instances.length > 1 ? 'Ativo' : 'Inativo'}
+                  </Badge>
+                </div>
+              </div>
+            </div>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Mensagens Pendentes</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.pendingMessages}</div>
-            <p className="text-xs text-muted-foreground">
-              aguardando envio
-            </p>
-          </CardContent>
-        </Card>
+            {/* Métricas de Tempo */}
+            <div className="space-y-3">
+              <h4 className="font-medium">Métricas de Tempo</h4>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span>Tempo Médio de Resposta</span>
+                  <span className="font-medium">{metrics.avg_response_time.toFixed(1)}min</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Velocidade de Envio</span>
+                  <span className="font-medium">{metrics.messages_per_minute.toFixed(1)} msg/min</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Uptime do Sistema</span>
+                  <span className="font-medium text-green-600">99.8%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Esta Semana</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.messagesThisWeek}</div>
-            <p className="text-xs text-muted-foreground">
-              mensagens enviadas/recebidas
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Seção Motor de Campanhas - FASE 2 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Zap className="h-5 w-5" />
+            Motor de Campanhas Avançado (Fase 2)
+          </CardTitle>
+          <CardDescription>
+            Sistema inteligente de campanhas com multi-sessão e randomização
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {/* Status das campanhas do engine */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 border rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <Activity className="h-4 w-4 text-blue-500" />
+                  <span className="font-medium">Campanhas Engine</span>
+                </div>
+                <p className="text-2xl font-bold">{engineCampaigns.length}</p>
+                <p className="text-sm text-muted-foreground">
+                  {engineCampaigns.filter(c => c.status === 'running').length} ativas
+                </p>
+              </div>
 
-      {/* Charts and Analytics */}
-      <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="overview">Visão Geral</TabsTrigger>
-          <TabsTrigger value="campaigns">Campanhas</TabsTrigger>
-          <TabsTrigger value="instances">Instâncias</TabsTrigger>
-          <TabsTrigger value="analytics">Analytics</TabsTrigger>
+              <div className="p-4 border rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <Network className="h-4 w-4 text-green-500" />
+                  <span className="font-medium">Multi-Sessão</span>
+                </div>
+                <p className="text-2xl font-bold">{instances.length}</p>
+                <p className="text-sm text-muted-foreground">
+                  {instances.filter(i => i.status === 'connected').length} conectadas
+                </p>
+              </div>
+
+              <div className="p-4 border rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <Shuffle className="h-4 w-4 text-purple-500" />
+                  <span className="font-medium">Randomização</span>
+                </div>
+                <p className="text-2xl font-bold">{randomizationProfiles.length}</p>
+                <p className="text-sm text-muted-foreground">
+                  perfis ativos
+                </p>
+              </div>
+            </div>
+
+            {/* Funcionalidades da Fase 2 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-3">
+                <h4 className="font-medium">Funcionalidades Ativas</h4>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between p-2 border rounded">
+                    <span className="text-sm">Motor de Campanhas</span>
+                    <Badge variant="default">✅ Ativo</Badge>
+                  </div>
+                  <div className="flex items-center justify-between p-2 border rounded">
+                    <span className="text-sm">Multi-Sessão com Failover</span>
+                    <Badge variant={instances.length > 1 ? "default" : "secondary"}>
+                      {instances.length > 1 ? '✅ Ativo' : '⚠️ Inativo'}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between p-2 border rounded">
+                    <span className="text-sm">Randomização Inteligente</span>
+                    <Badge variant={randomizationProfiles.length > 0 ? "default" : "secondary"}>
+                      {randomizationProfiles.length > 0 ? '✅ Ativo' : '⚠️ Inativo'}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between p-2 border rounded">
+                    <span className="text-sm">Rate Limiting Adaptativo</span>
+                    <Badge variant={rateLimitConfigs.length > 0 ? "default" : "secondary"}>
+                      {rateLimitConfigs.length > 0 ? '✅ Ativo' : '⚠️ Inativo'}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="font-medium">Métricas do Engine</h4>
+                <div className="space-y-2">
+                  {engineCampaigns.length > 0 ? (
+                    engineCampaigns.slice(0, 3).map((campaign, index) => (
+                      <div key={index} className="flex items-center justify-between p-2 border rounded">
+                        <div>
+                          <p className="text-sm font-medium">{campaign.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {campaign.campaign_type} • {campaign.status}
+                          </p>
+                        </div>
+                        <div className="flex gap-1">
+                          {campaign.multi_session_enabled && (
+                            <Badge variant="outline" className="text-xs">Multi</Badge>
+                          )}
+                          {campaign.randomization_enabled && (
+                            <Badge variant="outline" className="text-xs">Random</Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Nenhuma campanha do engine encontrada
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Seção Multi-Sessão com Failover - FASE 2 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Network className="h-5 w-5" />
+            Sistema Multi-Sessão com Failover (Fase 2)
+          </CardTitle>
+          <CardDescription>
+            Gerenciamento inteligente de múltiplas instâncias WhatsApp com failover automático
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {/* Status das instâncias */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="p-4 border rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <Network className="h-4 w-4 text-blue-500" />
+                  <span className="font-medium">Total Instâncias</span>
+                </div>
+                <p className="text-2xl font-bold">{instances.length}</p>
+                <p className="text-sm text-muted-foreground">configuradas</p>
+              </div>
+
+              <div className="p-4 border rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <CheckCircle className="h-4 w-4 text-green-500" />
+                  <span className="font-medium">Conectadas</span>
+                </div>
+                <p className="text-2xl font-bold text-green-600">
+                  {instances.filter(i => i.status === 'connected').length}
+                </p>
+                <p className="text-sm text-muted-foreground">online</p>
+              </div>
+
+              <div className="p-4 border rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                  <span className="font-medium">Desconectadas</span>
+                </div>
+                <p className="text-2xl font-bold text-yellow-600">
+                  {instances.filter(i => i.status === 'disconnected').length}
+                </p>
+                <p className="text-sm text-muted-foreground">offline</p>
+              </div>
+
+              <div className="p-4 border rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <Heart className="h-4 w-4 text-red-500" />
+                  <span className="font-medium">Failover</span>
+                </div>
+                <p className="text-2xl font-bold">
+                  {instances.filter(i => i.failover_enabled).length}
+                </p>
+                <p className="text-sm text-muted-foreground">habilitado</p>
+              </div>
+            </div>
+
+            {/* Lista de instâncias */}
+            <div className="space-y-3">
+              <h4 className="font-medium">Status das Instâncias</h4>
+              {instances.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {instances.slice(0, 6).map((instance, index) => (
+                    <div key={index} className="p-3 border rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${
+                            instance.status === 'connected' ? 'bg-green-500' :
+                            instance.status === 'connecting' ? 'bg-yellow-500' : 'bg-red-500'
+                          }`} />
+                          <span className="font-medium">{instance.name}</span>
+                        </div>
+                        <div className="flex gap-1">
+                          {instance.failover_enabled && (
+                            <Badge variant="outline" className="text-xs">Failover</Badge>
+                          )}
+                          <Badge variant={
+                            instance.status === 'connected' ? 'default' :
+                            instance.status === 'connecting' ? 'secondary' : 'destructive'
+                          } className="text-xs">
+                            {instance.status}
+                          </Badge>
+                        </div>
+                      </div>
+                      <div className="text-xs text-muted-foreground space-y-1">
+                        <div className="flex justify-between">
+                          <span>Load:</span>
+                          <span>{instance.current_load || 0}%</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Prioridade:</span>
+                          <span>{instance.priority || 1}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Última verificação:</span>
+                          <span>{instance.last_health_check ? 
+                            new Date(instance.last_health_check).toLocaleTimeString('pt-BR') : 
+                            'N/A'
+                          }</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Network className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>Nenhuma instância configurada</p>
+                  <p className="text-sm">Configure instâncias WhatsApp para habilitar multi-sessão</p>
+                </div>
+              )}
+            </div>
+
+            {/* Componente MultiSessionManager */}
+            <div className="border-t pt-4">
+              <h4 className="font-medium mb-3">Gerenciador Multi-Sessão</h4>
+              <MultiSessionManager />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Tabs para diferentes visualizações */}
+      <Tabs defaultValue="campaigns" className="space-y-4">
+        <TabsList className="grid w-full grid-cols-4">
+          <TabsTrigger value="campaigns">
+            <BarChart3 className="w-4 h-4 mr-2" />
+            Campanhas
+          </TabsTrigger>
+          <TabsTrigger value="health">
+            <Heart className="w-4 h-4 mr-2" />
+            Health Monitor
+          </TabsTrigger>
+          <TabsTrigger value="activity">
+            <Activity className="w-4 h-4 mr-2" />
+            Atividade
+          </TabsTrigger>
+          <TabsTrigger value="analytics">
+            <TrendingUp className="w-4 h-4 mr-2" />
+            Analytics
+          </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
+        {/* Campanhas Ativas */}
+        <TabsContent value="campaigns" className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Lista de Campanhas Ativas */}
             <Card>
               <CardHeader>
-                <CardTitle>Mensagens por Dia</CardTitle>
+                <CardTitle>Campanhas em Execução</CardTitle>
                 <CardDescription>
-                  Período selecionado - mensagens enviadas e recebidas
+                  {runningCampaigns.length} campanhas ativas no momento
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={messagesByDay}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="date" />
-                      <YAxis />
-                      <Tooltip />
-                      <Area 
-                        type="monotone" 
-                        dataKey="sent" 
-                        stackId="1"
-                        stroke="#8884d8" 
-                        fill="#8884d8" 
-                        name="Enviadas"
-                      />
-                      <Area 
-                        type="monotone" 
-                        dataKey="received" 
-                        stackId="1"
-                        stroke="#82ca9d" 
-                        fill="#82ca9d" 
-                        name="Recebidas"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                <div className="space-y-3">
+                  {runningCampaigns.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <BarChart3 className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                      <p>Nenhuma campanha ativa</p>
+                    </div>
+                  ) : (
+                    runningCampaigns.map((campaign) => (
+                      <div 
+                        key={campaign.id} 
+                        className={`p-3 border rounded-lg cursor-pointer transition-colors ${
+                          selectedCampaignId === campaign.id ? 'bg-primary/10 border-primary' : 'hover:bg-muted/50'
+                        }`}
+                        onClick={() => setSelectedCampaignId(
+                          selectedCampaignId === campaign.id ? null : campaign.id
+                        )}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="font-medium">{campaign.name}</h4>
+                            <p className="text-sm text-muted-foreground">
+                              {metrics.total_messages_sent || 0} mensagens enviadas
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline">
+                              {metrics.success_rate.toFixed(0)}%
+                            </Badge>
+                            <Button variant="ghost" size="sm">
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        <Progress 
+                          value={metrics.success_rate} 
+                          className="mt-2 h-2" 
+                        />
+                      </div>
+                    ))
+                  )}
                 </div>
               </CardContent>
             </Card>
 
+            {/* Progresso Detalhado da Campanha Selecionada */}
             <Card>
               <CardHeader>
-                <CardTitle>Atividade por Hora</CardTitle>
+                <CardTitle>Progresso Detalhado</CardTitle>
                 <CardDescription>
-                  Distribuição de mensagens ao longo do dia (hoje)
+                  {selectedCampaignId ? 'Monitoramento em tempo real' : 'Selecione uma campanha para ver detalhes'}
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={messagesByHour}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="hour" />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="messages" fill="#8884d8" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                {selectedCampaignId ? (
+                  <CampaignProgress campaignId={selectedCampaignId} />
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    <p>Selecione uma campanha para ver o progresso detalhado</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
         </TabsContent>
 
-        <TabsContent value="campaigns" className="space-y-4">
+        {/* Health Monitor */}
+        <TabsContent value="health" className="space-y-4">
+          <InstanceHealthMonitor />
+        </TabsContent>
+
+        {/* Atividade em Tempo Real */}
+        <TabsContent value="activity" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Performance das Campanhas</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <Activity className="h-5 w-5" />
+                Atividade em Tempo Real
+              </CardTitle>
               <CardDescription>
-                Top 5 campanhas por performance
+                Últimas atividades do sistema
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {campaignMetrics.map((campaign, index) => (
-                  <div key={campaign.name} className="flex items-center justify-between p-4 border rounded-lg">
-                    <div className="flex items-center gap-4">
-                      <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary font-semibold">
-                        {index + 1}
-                      </div>
-                      <div>
-                        <h4 className="font-medium">{campaign.name}</h4>
-                        <p className="text-sm text-muted-foreground">
-                          {campaign.sent} mensagens enviadas
-                        </p>
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {realtimeActivity.map((activity) => (
+                  <div key={activity.id} className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
+                    {getActivityIcon(activity.type)}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium">{activity.message}</p>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        {activity.campaign_name && <span>Campanha: {activity.campaign_name}</span>}
+                        {activity.instance_name && <span>Instância: {activity.instance_name}</span>}
+                        {activity.contact_name && <span>Contato: {activity.contact_name}</span>}
                       </div>
                     </div>
-                    <div className="flex items-center gap-6">
-                      <div className="text-center">
-                        <p className="text-sm font-medium">
-                          {campaign.sent > 0 ? ((campaign.delivered / campaign.sent) * 100).toFixed(1) : '0'}%
-                        </p>
-                        <p className="text-xs text-muted-foreground">Entrega</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-sm font-medium">
-                          {campaign.delivered > 0 ? ((campaign.opened / campaign.delivered) * 100).toFixed(1) : '0'}%
-                        </p>
-                        <p className="text-xs text-muted-foreground">Abertura</p>
-                      </div>
-                      <Badge variant={campaign.status === 'active' ? 'default' : 'secondary'}>
-                        {campaign.status === 'active' ? 'Ativa' : 
-                         campaign.status === 'paused' ? 'Pausada' : 'Concluída'}
-                      </Badge>
+                    <div className="text-xs text-muted-foreground">
+                      {new Date(activity.timestamp).toLocaleTimeString('pt-BR')}
                     </div>
                   </div>
                 ))}
                 
-                {campaignMetrics.length === 0 && (
-                  <div className="text-center py-8">
-                    <Target className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <p className="text-muted-foreground">Nenhuma campanha encontrada</p>
-                    <p className="text-sm text-muted-foreground">Crie sua primeira campanha para ver as métricas</p>
+                {realtimeActivity.length === 0 && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Activity className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    <p>Aguardando atividades...</p>
                   </div>
                 )}
               </div>
@@ -770,114 +864,30 @@ export default function Dashboard() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="instances" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Status das Instâncias</CardTitle>
-              <CardDescription>
-                Monitoramento em tempo real das suas instâncias WhatsApp
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {instances.map((instance) => (
-                  <div key={instance.id} className="flex items-center justify-between p-4 border rounded-lg">
-                    <div className="flex items-center gap-4">
-                      <div className="flex-shrink-0">
-                        {instance.status === 'connected' && (
-                          <CheckCircle className="w-8 h-8 text-green-500" />
-                        )}
-                        {instance.status === 'connecting' && (
-                          <Clock className="w-8 h-8 text-yellow-500" />
-                        )}
-                        {(instance.status === 'disconnected' || instance.status === 'error') && (
-                          <AlertCircle className="w-8 h-8 text-red-500" />
-                        )}
-                      </div>
-                      <div>
-                        <h4 className="font-medium">{instance.name}</h4>
-                        <p className="text-sm text-muted-foreground">
-                          {instance.status === 'connected' ? 'Conectada e funcionando' : 
-                           instance.status === 'connecting' ? 'Conectando...' : 
-                           instance.status === 'disconnected' ? 'Desconectada' : 'Erro de conexão'}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Badge 
-                        variant={
-                          instance.status === 'connected' ? 'default' :
-                          instance.status === 'connecting' ? 'secondary' : 'destructive'
-                        }
-                      >
-                        {instance.status === 'connected' ? 'Online' :
-                         instance.status === 'connecting' ? 'Conectando' : 'Offline'}
-                      </Badge>
-                      {instance.status !== 'connected' && (
-                        <Button size="sm" variant="outline">
-                          Reconectar
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                
-                {instances.length === 0 && (
-                  <div className="text-center py-8">
-                    <Smartphone className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <p className="text-muted-foreground">Nenhuma instância configurada</p>
-                    <p className="text-sm text-muted-foreground">Configure sua primeira instância para começar</p>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
+        {/* Analytics */}
         <TabsContent value="analytics" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
               <CardHeader>
-                <CardTitle>Comparativo de Performance</CardTitle>
-                <CardDescription>
-                  Métricas principais vs período anterior
-                </CardDescription>
+                <CardTitle>Estatísticas Gerais</CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">Mensagens</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">{stats.totalMessages}</span>
-                      <span className={`text-xs ${getGrowthColor(stats.messagesGrowth)}`}>
-                        {getGrowthIcon(stats.messagesGrowth)}
-                        {formatGrowth(stats.messagesGrowth)}
-                      </span>
-                    </div>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-4 text-center">
+                  <div>
+                    <p className="text-2xl font-bold text-blue-600">{metrics.total_messages_sent.toLocaleString()}</p>
+                    <p className="text-sm text-muted-foreground">Mensagens Enviadas</p>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">Contatos</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">{stats.totalContacts}</span>
-                      <span className={`text-xs ${getGrowthColor(stats.contactsGrowth)}`}>
-                        {getGrowthIcon(stats.contactsGrowth)}
-                        {formatGrowth(stats.contactsGrowth)}
-                      </span>
-                    </div>
+                  <div>
+                    <p className="text-2xl font-bold text-green-600">{metrics.success_rate.toFixed(1)}%</p>
+                    <p className="text-sm text-muted-foreground">Taxa de Sucesso</p>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">Taxa de Entrega</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">{stats.deliveryRate}%</span>
-                      <Progress value={stats.deliveryRate} className="w-16 h-2" />
-                    </div>
+                  <div>
+                    <p className="text-2xl font-bold text-purple-600">{metrics.total_contacts.toLocaleString()}</p>
+                    <p className="text-sm text-muted-foreground">Contatos Alcançados</p>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">Taxa de Resposta</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">{stats.responseRate}%</span>
-                      <Progress value={stats.responseRate} className="w-16 h-2" />
-                    </div>
+                  <div>
+                    <p className="text-2xl font-bold text-orange-600">{metrics.response_rate.toFixed(1)}%</p>
+                    <p className="text-sm text-muted-foreground">Taxa de Resposta</p>
                   </div>
                 </div>
               </CardContent>
@@ -885,44 +895,43 @@ export default function Dashboard() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Resumo Semanal</CardTitle>
-                <CardDescription>
-                  Atividade dos últimos 7 dias
-                </CardDescription>
+                <CardTitle>Performance do Sistema</CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex items-center gap-3">
-                    <Send className="h-4 w-4 text-blue-600" />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">Mensagens Enviadas</p>
-                      <p className="text-xs text-muted-foreground">Esta semana</p>
+              <CardContent className="space-y-4">
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex items-center justify-between text-sm mb-1">
+                      <span>Instâncias Online</span>
+                      <span>{metrics.instances_online}/{metrics.total_instances}</span>
                     </div>
-                    <span className="text-lg font-bold">{stats.messagesThisWeek}</span>
+                    <Progress 
+                      value={metrics.total_instances > 0 ? (metrics.instances_online / metrics.total_instances) * 100 : 0} 
+                      className="h-2" 
+                    />
                   </div>
-                  <div className="flex items-center gap-3">
-                    <UserPlus className="h-4 w-4 text-green-600" />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">Novos Contatos</p>
-                      <p className="text-xs text-muted-foreground">Esta semana</p>
+                  
+                  <div>
+                    <div className="flex items-center justify-between text-sm mb-1">
+                      <span>Campanhas Ativas</span>
+                      <span>{metrics.active_campaigns}/{metrics.total_campaigns}</span>
                     </div>
-                    <span className="text-lg font-bold">{stats.contactsThisWeek}</span>
+                    <Progress 
+                      value={metrics.total_campaigns > 0 ? (metrics.active_campaigns / metrics.total_campaigns) * 100 : 0} 
+                      className="h-2" 
+                    />
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Target className="h-4 w-4 text-purple-600" />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">Campanhas Ativas</p>
-                      <p className="text-xs text-muted-foreground">Em execução</p>
+                  
+                  <div className="pt-2 border-t">
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Tempo Médio de Resposta</span>
+                        <p className="font-medium">{metrics.avg_response_time.toFixed(1)} min</p>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Velocidade de Envio</span>
+                        <p className="font-medium">{metrics.messages_per_minute.toFixed(1)} msg/min</p>
+                      </div>
                     </div>
-                    <span className="text-lg font-bold">{stats.activeCampaigns}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Clock className="h-4 w-4 text-orange-600" />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">Mensagens Pendentes</p>
-                      <p className="text-xs text-muted-foreground">Aguardando envio</p>
-                    </div>
-                    <span className="text-lg font-bold">{stats.pendingMessages}</span>
                   </div>
                 </div>
               </CardContent>

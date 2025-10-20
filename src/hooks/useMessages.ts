@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { useAuth } from './useAuth'
 import { useToast } from './use-toast'
 import { supabase } from '@/lib/supabase'
+import { useTenant } from '@/hooks/useTenant'
 
 export interface MediaFile {
   file: File
@@ -38,6 +39,7 @@ export const useMessages = () => {
   const [uploadProgress, setUploadProgress] = useState(0)
   const { user } = useAuth()
   const { toast } = useToast()
+  const { currentTenant } = useTenant()
 
   // Enviar mensagem com mídia
   const sendMediaMessage = useCallback(async (
@@ -51,11 +53,11 @@ export const useMessages = () => {
       setLoading(true)
       setUploadProgress(0)
 
-      // Buscar instância ativa
+      // Buscar instância ativa (preferir tenant)
       const { data: instances, error: instanceError } = await supabase
         .from('whatsapp_instances')
         .select('*')
-        .eq('user_id', user.id)
+        .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
         .eq('status', 'connected')
         .limit(1)
 
@@ -109,10 +111,9 @@ export const useMessages = () => {
         .from('messages')
         .insert([
           {
-            whatsapp_instance_id: instance.id,
-            user_id: user.id,
+            instance_id: instance.id,
             message_id: `media_${Date.now()}`,
-            from_number: instance.name,
+            from_number: instance.phone_number || instance.name,
             to_number: contactNumber,
             content: message,
             message_type: mediaFile.type,
@@ -144,7 +145,7 @@ export const useMessages = () => {
       setLoading(false)
       setUploadProgress(0)
     }
-  }, [user, toast])
+  }, [user, toast, currentTenant?.id])
 
   // Enviar mensagens em massa
   const sendBulkMessages = useCallback(async (bulkData: BulkMessageData) => {
@@ -153,11 +154,11 @@ export const useMessages = () => {
     try {
       setLoading(true)
 
-      // Buscar instância ativa
+      // Buscar instância ativa (preferir tenant)
       const { data: instances, error: instanceError } = await supabase
         .from('whatsapp_instances')
         .select('*')
-        .eq('user_id', user.id)
+        .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
         .eq('status', 'connected')
         .limit(1)
 
@@ -197,21 +198,39 @@ export const useMessages = () => {
           try {
             // Se agendado, salvar para envio posterior
             if (bulkData.scheduledAt) {
-              const { error: scheduleError } = await supabase
-                .from('scheduled_messages')
-                .insert([
-                  {
-                    user_id: user.id,
-                    whatsapp_instance_id: instance.id,
-                    contact_number: contact,
-                    message: bulkData.message,
-                    media_url: mediaUrl,
-                    scheduled_at: bulkData.scheduledAt.toISOString(),
-                    status: 'pending'
-                  }
-                ])
-
-              if (scheduleError) throw scheduleError
+              try {
+                const { error: scheduleError } = await supabase
+                  .from('scheduled_messages')
+                  .insert([
+                    {
+                      user_id: user.id,
+                      ...(currentTenant?.id ? { tenant_id: currentTenant.id } : {}),
+                      instance_id: instance.id,
+                      contact_number: contact,
+                      message: bulkData.message,
+                      media_url: mediaUrl,
+                      scheduled_at: bulkData.scheduledAt.toISOString(),
+                      status: 'pending'
+                    }
+                  ])
+                if (scheduleError) throw scheduleError
+              } catch (err: any) {
+                // Fallback sem tenant_id
+                const fb = await supabase
+                  .from('scheduled_messages')
+                  .insert([
+                    {
+                      user_id: user.id,
+                      instance_id: instance.id,
+                      contact_number: contact,
+                      message: bulkData.message,
+                      media_url: mediaUrl,
+                      scheduled_at: bulkData.scheduledAt.toISOString(),
+                      status: 'pending'
+                    }
+                  ])
+                if (fb.error) throw fb.error
+              }
               return { contact, success: true, scheduled: true }
             }
 
@@ -239,10 +258,9 @@ export const useMessages = () => {
               .from('messages')
               .insert([
                 {
-                  whatsapp_instance_id: instance.id,
-                  user_id: user.id,
+                  instance_id: instance.id,
                   message_id: `bulk_${Date.now()}_${contact}`,
-                  from_number: instance.name,
+                  from_number: instance.phone_number || instance.name,
                   to_number: contact,
                   content: bulkData.message,
                   message_type: bulkData.mediaFile?.type || 'text',
@@ -292,7 +310,7 @@ export const useMessages = () => {
     } finally {
       setLoading(false)
     }
-  }, [user, toast])
+  }, [user, toast, currentTenant?.id])
 
   // Buscar templates rápidos
   const getQuickTemplates = useCallback(async (): Promise<MessageTemplate[]> => {
@@ -302,18 +320,30 @@ export const useMessages = () => {
       const { data, error } = await supabase
         .from('message_templates')
         .select('*')
-        .eq('user_id', user.id)
+        .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
         .eq('is_quick_template', true)
         .order('name')
 
-      if (error) throw error
+      if (error) {
+        if (currentTenant?.id) {
+          const fb = await supabase
+            .from('message_templates')
+            .select('*')
+            .eq('user_id', user.id)
+            .eq('is_quick_template', true)
+            .order('name')
+          if (fb.error) throw fb.error
+          return fb.data || []
+        }
+        throw error
+      }
 
       return data || []
     } catch (error) {
       console.error('Erro ao buscar templates:', error)
       return []
     }
-  }, [user])
+  }, [user, currentTenant?.id])
 
   // Buscar mensagens agendadas
   const getScheduledMessages = useCallback(async (): Promise<ScheduledMessage[]> => {
@@ -323,10 +353,29 @@ export const useMessages = () => {
       const { data, error } = await supabase
         .from('scheduled_messages')
         .select('*')
-        .eq('user_id', user.id)
+        .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
         .order('scheduled_at')
 
-      if (error) throw error
+      if (error) {
+        if (currentTenant?.id) {
+          const fb = await supabase
+            .from('scheduled_messages')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('scheduled_at')
+          if (fb.error) throw fb.error
+          return fb.data?.map(msg => ({
+            id: msg.id,
+            contact: msg.contact_number,
+            message: msg.message,
+            mediaUrl: msg.media_url,
+            scheduledAt: new Date(msg.scheduled_at),
+            status: msg.status,
+            createdAt: new Date(msg.created_at)
+          })) || []
+        }
+        throw error
+      }
 
       return data?.map(msg => ({
         id: msg.id,
@@ -341,18 +390,28 @@ export const useMessages = () => {
       console.error('Erro ao buscar mensagens agendadas:', error)
       return []
     }
-  }, [user])
+  }, [user, currentTenant?.id])
 
   // Cancelar mensagem agendada
   const cancelScheduledMessage = useCallback(async (messageId: string) => {
     try {
-      const { error } = await supabase
+      const base = supabase
         .from('scheduled_messages')
         .delete()
         .eq('id', messageId)
-        .eq('user_id', user?.id)
+      const withFilter = currentTenant?.id ? base.eq('tenant_id', currentTenant.id) : base.eq('user_id', user?.id)
+      const { error } = await withFilter
 
-      if (error) throw error
+      if (error && currentTenant?.id) {
+        const fb = await supabase
+          .from('scheduled_messages')
+          .delete()
+          .eq('id', messageId)
+          .eq('user_id', user?.id)
+        if (fb.error) throw fb.error
+      } else if (error) {
+        throw error
+      }
 
       toast({
         title: "Mensagem cancelada",
@@ -369,7 +428,7 @@ export const useMessages = () => {
       })
       return false
     }
-  }, [user, toast])
+  }, [user, toast, currentTenant?.id])
 
   return {
     loading,

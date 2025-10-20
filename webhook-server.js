@@ -75,7 +75,7 @@ async function saveMessage(messageData, instanceName) {
     const { data: instance, error: instanceError } = await supabaseService
       .from('whatsapp_instances')
       .select('id, user_id')
-      .eq('name', instanceName)
+      .eq('api_key', instanceName)
       .single()
 
     if (instanceError || !instance) {
@@ -116,8 +116,7 @@ async function saveMessage(messageData, instanceName) {
       .from('messages')
       .insert([
         {
-          whatsapp_instance_id: instance.id,
-          user_id: instance.user_id,
+          instance_id: instance.id,
           message_id: message.key.id,
           from_number: message.key.remoteJid,
           to_number: message.key.fromMe ? message.key.remoteJid : instanceName,
@@ -160,7 +159,7 @@ async function saveContact(phoneNumber, name, instanceId, userId) {
       .from('contacts')
       .select('id')
       .eq('phone_number', phoneNumber)
-      .eq('whatsapp_instance_id', instanceId)
+      .eq('instance_id', instanceId)
       .single()
 
     if (existingContact) {
@@ -180,7 +179,7 @@ async function saveContact(phoneNumber, name, instanceId, userId) {
         .from('contacts')
         .insert([
           {
-            whatsapp_instance_id: instanceId,
+            instance_id: instanceId,
             user_id: userId,
             phone_number: phoneNumber,
             name: name || phoneNumber,

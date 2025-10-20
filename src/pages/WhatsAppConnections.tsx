@@ -18,7 +18,10 @@ import {
   AlertCircle,
   CheckCircle,
   Clock,
-  Maximize2
+  Maximize2,
+  Activity,
+  Heart,
+  Send
 } from 'lucide-react'
 import {
   Dialog,
@@ -39,6 +42,8 @@ import { Label } from '@/components/ui/label'
 import { useEvolutionApi } from '@/hooks/useEvolutionApi'
 import { useToast } from '@/hooks/use-toast'
 import { WhatsAppInstance } from '@/services/whatsappInstanceService'
+import { InstanceHealthMonitor } from '@/components/InstanceHealthMonitor'
+import { Textarea } from '@/components/ui/textarea'
 
 export default function WhatsAppConnections() {
   const [searchTerm, setSearchTerm] = useState('')
@@ -46,21 +51,31 @@ export default function WhatsAppConnections() {
   const [newInstanceName, setNewInstanceName] = useState('')
   const [selectedInstance, setSelectedInstance] = useState<WhatsAppInstance | null>(null)
   const [isQRDialogOpen, setIsQRDialogOpen] = useState(false)
+  // Estados para exibição de eventos recentes
+  const [openEventsInstanceId, setOpenEventsInstanceId] = useState<string | null>(null)
+  const [eventsByInstance, setEventsByInstance] = useState<Record<string, any[]>>({})
+  const [eventsLoadingId, setEventsLoadingId] = useState<string | null>(null)
+  // Estados para envio de mensagem
+  const [isSendDialogOpen, setIsSendDialogOpen] = useState(false)
+  const [sendToNumber, setSendToNumber] = useState('')
+  const [sendText, setSendText] = useState('')
+  const [isSending, setIsSending] = useState(false)
   
   const { 
     instances,
-    connectionStatus, 
     loading, 
     createInstance,
     connect, 
     disconnect, 
     checkConnectionStatus,
-    deleteInstance
+    deleteInstance,
+    getRecentEvents,
+    sendMessage,
   } = useEvolutionApi()
   
   const { toast } = useToast()
 
-  const qrToDisplay = selectedInstance?.qr_code || connectionStatus.qrCode
+  const qrToDisplay = selectedInstance?.qr_code
 
   // Filtrar instâncias baseado no termo de busca
   const filteredInstances = instances.filter(instance =>
@@ -90,10 +105,10 @@ export default function WhatsAppConnections() {
   const handleConnect = async (instance: WhatsAppInstance) => {
     try {
       setSelectedInstance(instance)
-      await connect(instance.id)
+      const result = await connect(instance.id)
       
       // Se gerou QR Code, abrir dialog
-      if (connectionStatus.qrCode) {
+      if (result?.qrCode) {
         setIsQRDialogOpen(true)
       }
     } catch (error) {
@@ -116,6 +131,38 @@ export default function WhatsAppConnections() {
       } catch (error) {
         // Erro já tratado no hook
       }
+    }
+  }
+
+  const handleRefreshAll = async () => {
+    try {
+      await Promise.all(instances.map(i => checkConnectionStatus(i.id)))
+    } catch {}
+  }
+
+  // Eventos recentes por instância
+  const handleViewEvents = async (instance: WhatsAppInstance) => {
+    if (openEventsInstanceId === instance.id) {
+      setOpenEventsInstanceId(null)
+      return
+    }
+    setOpenEventsInstanceId(instance.id)
+    setEventsLoadingId(instance.id)
+    try {
+      const events = await getRecentEvents(instance, 10)
+      setEventsByInstance(prev => ({ ...prev, [instance.id]: events }))
+    } finally {
+      setEventsLoadingId(null)
+    }
+  }
+
+  const handleRefreshEvents = async (instance: WhatsAppInstance) => {
+    setEventsLoadingId(instance.id)
+    try {
+      const events = await getRecentEvents(instance, 10)
+      setEventsByInstance(prev => ({ ...prev, [instance.id]: events }))
+    } finally {
+      setEventsLoadingId(null)
     }
   }
 
@@ -156,6 +203,43 @@ export default function WhatsAppConnections() {
     if (diffInMinutes < 60) return `${diffInMinutes}m atrás`
     if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h atrás`
     return `${Math.floor(diffInMinutes / 1440)}d atrás`
+  }
+
+  const handleOpenSendDialog = (instance: WhatsAppInstance) => {
+    setSelectedInstance(instance)
+    setSendToNumber(instance.phone_number || '')
+    setSendText('')
+    setIsSendDialogOpen(true)
+  }
+
+  const handleSendMessage = async () => {
+    if (!selectedInstance) return
+    const toNumber = sendToNumber.trim()
+    const text = sendText.trim()
+
+    if (!toNumber || !text) {
+      toast({ title: 'Campos obrigatórios', description: 'Informe o número e a mensagem.', variant: 'destructive' })
+      return
+    }
+    if (selectedInstance.status !== 'connected') {
+      toast({ title: 'Instância não conectada', description: 'Conecte a instância para enviar mensagens.', variant: 'destructive' })
+      return
+    }
+
+    try {
+      setIsSending(true)
+      const sanitizedNumber = toNumber.replace(/\D/g, '')
+      const res = await sendMessage(selectedInstance, sanitizedNumber, text)
+      if (res?.success) {
+        setIsSendDialogOpen(false)
+        setSendText('')
+        toast({ title: 'Mensagem enviada', description: `Para ${sanitizedNumber}` })
+      }
+    } catch (e: any) {
+      // Erro tratado no hook
+    } finally {
+      setIsSending(false)
+    }
   }
 
   return (
@@ -212,6 +296,10 @@ export default function WhatsAppConnections() {
       <Tabs defaultValue="instances" className="space-y-4">
         <TabsList>
           <TabsTrigger value="instances">Instâncias</TabsTrigger>
+          <TabsTrigger value="health">
+            <Heart className="w-4 h-4 mr-2" />
+            Health Check
+          </TabsTrigger>
           <TabsTrigger value="settings">Configurações</TabsTrigger>
         </TabsList>
 
@@ -227,7 +315,7 @@ export default function WhatsAppConnections() {
                 className="pl-8"
               />
             </div>
-            <Button variant="outline" onClick={() => checkConnectionStatus()} disabled={loading}>
+            <Button variant="outline" onClick={handleRefreshAll} disabled={loading}>
               <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
               Atualizar
             </Button>
@@ -289,6 +377,17 @@ export default function WhatsAppConnections() {
                       )}
                       <div className="flex items-center gap-2">
                         {getStatusBadge(instance.status)}
+                        {/* Indicador de Health Status */}
+                        <div className="flex items-center gap-1">
+                          <div className={`w-2 h-2 rounded-full ${
+                            instance.status === 'connected' ? 'bg-green-500' :
+                            instance.status === 'connecting' ? 'bg-yellow-500' : 'bg-red-500'
+                          }`} />
+                          <span className="text-xs text-muted-foreground">
+                            {instance.status === 'connected' ? 'Saudável' :
+                             instance.status === 'connecting' ? 'Verificando' : 'Offline'}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </CardHeader>
@@ -302,6 +401,14 @@ export default function WhatsAppConnections() {
                       <div className="flex justify-between">
                         <span>Criado em:</span>
                         <span>{new Date(instance.created_at).toLocaleDateString('pt-BR')}</span>
+                      </div>
+                      {/* Health Check Info */}
+                      <div className="flex justify-between">
+                        <span>Health Check:</span>
+                        <span className="flex items-center gap-1">
+                          <Activity className="w-3 h-3" />
+                          {instance.status === 'connected' ? 'OK' : 'N/A'}
+                        </span>
                       </div>
                     </div>
 
@@ -364,54 +471,82 @@ export default function WhatsAppConnections() {
                           disabled={loading}
                           className="flex-1"
                         >
+                          <WifiOff className="w-4 h-4 mr-2" />
                           Cancelar
                         </Button>
                       )}
-                      {instance.status === 'connecting' && (
-                        <Button 
-                          onClick={() => checkConnectionStatus(instance.id)}
-                          variant="outline"
-                          disabled={loading}
-                          className="flex-1"
-                        >
-                          <RefreshCw className="w-4 h-4 mr-2" />
-                          Atualizar status
-                        </Button>
-                      )}
+                      
                       {instance.status === 'connected' && (
-                        <Button 
-                          onClick={() => handleDisconnect(instance)}
-                          variant="outline"
-                          disabled={loading}
-                          className="flex-1"
-                        >
-                          <WifiOff className="w-4 h-4 mr-2" />
-                          Desconectar
-                        </Button>
+                        <>
+                          <Button 
+                            onClick={() => handleDisconnect(instance)}
+                            variant="outline"
+                            disabled={loading}
+                            className="flex-1"
+                          >
+                            <WifiOff className="w-4 h-4 mr-2" />
+                            Desconectar
+                          </Button>
+                          <Button 
+                            onClick={() => handleOpenSendDialog(instance)}
+                            disabled={loading}
+                            className="flex-1"
+                          >
+                            <Send className="w-4 h-4 mr-2" />
+                            Enviar Mensagem
+                          </Button>
+                        </>
                       )}
                       
-                      {instance.status === 'error' && (
-                        <Button 
-                          onClick={() => handleConnect(instance)}
-                          disabled={loading}
-                          className="flex-1"
-                        >
-                          <RefreshCw className="w-4 h-4 mr-2" />
-                          Tentar Novamente
-                        </Button>
-                      )}
-                      {instance.status === 'error' && (
-                        <Button 
-                          onClick={() => checkConnectionStatus(instance.id)}
-                          variant="outline"
-                          disabled={loading}
-                          className="flex-1"
-                        >
-                          <RefreshCw className="w-4 h-4 mr-2" />
-                          Verificar Status
-                        </Button>
-                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleViewEvents(instance)}
+                        disabled={eventsLoadingId === instance.id}
+                      >
+                        {eventsLoadingId === instance.id ? (
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Settings className="w-4 h-4" />
+                        )}
+                      </Button>
                     </div>
+
+                    {/* Eventos recentes expandidos */}
+                    {openEventsInstanceId === instance.id && (
+                      <div className="border-t pt-4 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-medium">Eventos Recentes</h4>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleRefreshEvents(instance)}
+                            disabled={eventsLoadingId === instance.id}
+                          >
+                            <RefreshCw className={`w-3 h-3 ${eventsLoadingId === instance.id ? 'animate-spin' : ''}`} />
+                          </Button>
+                        </div>
+                        <div className="space-y-1 max-h-32 overflow-y-auto">
+                          {eventsByInstance[instance.id]?.length > 0 ? (
+                            eventsByInstance[instance.id].map((event, idx) => (
+                              <div key={idx} className="text-xs p-2 bg-muted/50 rounded">
+                                <div className="flex justify-between">
+                                  <span className="font-medium">{event.type}</span>
+                                  <span className="text-muted-foreground">
+                                    {new Date(event.timestamp).toLocaleTimeString('pt-BR')}
+                                  </span>
+                                </div>
+                                <p className="text-muted-foreground">{event.message}</p>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-xs text-muted-foreground text-center py-2">
+                              Nenhum evento recente
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               ))
@@ -419,78 +554,117 @@ export default function WhatsAppConnections() {
           </div>
         </TabsContent>
 
+        {/* Nova aba de Health Check */}
+        <TabsContent value="health" className="space-y-4">
+          <InstanceHealthMonitor />
+        </TabsContent>
+
         <TabsContent value="settings" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Configurações da Evolution API</CardTitle>
               <CardDescription>
-                Configure os parâmetros de conexão com a Evolution API
+                Configure as opções globais da Evolution API
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <Label className="text-sm font-medium">URL da API</Label>
-                  <Input 
-                    value={import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080'}
-                    readOnly
-                    className="bg-muted"
-                  />
+            <CardContent>
+              <div className="space-y-4">
+                <div className="text-sm text-muted-foreground">
+                  <p>• URL da API: {import.meta.env.VITE_EVOLUTION_API_URL || 'Não configurada'}</p>
+                  <p>• Webhook Global: {import.meta.env.VITE_WEBHOOK_URL || 'Não configurado'}</p>
+                  <p>• Timeout de Conexão: 30 segundos</p>
+                  <p>• Health Check: Ativo (30s)</p>
                 </div>
-                <div>
-                  <Label className="text-sm font-medium">Chave da API</Label>
-                  <Input 
-                    value={import.meta.env.VITE_EVOLUTION_API_KEY || 'Não configurada'}
-                    type="password"
-                    readOnly
-                    className="bg-muted"
-                  />
-                </div>
-              </div>
-              <div className="text-sm text-muted-foreground">
-                <p>
-                  Configure as variáveis de ambiente VITE_EVOLUTION_API_URL e VITE_EVOLUTION_API_KEY 
-                  no arquivo .env para conectar com sua instância da Evolution API.
-                </p>
               </div>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
 
-      {/* Dialog para mostrar QR Code */}
+      {/* Dialog do QR Code */}
       <Dialog open={isQRDialogOpen} onOpenChange={setIsQRDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Conectar WhatsApp</DialogTitle>
             <DialogDescription>
-              Escaneie o QR Code com seu WhatsApp para conectar a instância
+              Escaneie o QR Code com o WhatsApp do seu celular
             </DialogDescription>
           </DialogHeader>
-          
-          {qrToDisplay && (
-            <div className="flex justify-center p-4">
+          <div className="flex items-center justify-center p-6">
+            {qrToDisplay ? (
               <div className="bg-white p-4 rounded-lg">
                 <img 
                   src={qrToDisplay} 
-                  alt="QR Code para conectar WhatsApp" 
+                  alt="QR Code WhatsApp" 
                   className="w-64 h-64"
                 />
               </div>
-            </div>
-          )}
-          
-          <div className="text-center text-sm text-muted-foreground">
-            <p>1. Abra o WhatsApp no seu celular</p>
-            <p>2. Toque em Menu ou Configurações</p>
-            <p>3. Toque em Aparelhos conectados</p>
-            <p>4. Toque em Conectar um aparelho</p>
-            <p>5. Aponte seu celular para esta tela para capturar o código</p>
+            ) : (
+              <div className="w-64 h-64 bg-muted rounded-lg flex items-center justify-center">
+                <div className="text-center">
+                  <QrCode className="w-12 h-12 mx-auto mb-2 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">Gerando QR Code...</p>
+                </div>
+              </div>
+            )}
           </div>
-          
-          <DialogFooter>
+          <DialogFooter className="sm:justify-start">
+            <Button
+              variant="outline"
+              onClick={() => selectedInstance && checkConnectionStatus(selectedInstance.id)}
+              disabled={loading}
+            >
+              <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+              Atualizar
+            </Button>
             <Button variant="outline" onClick={() => setIsQRDialogOpen(false)}>
               Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de envio de mensagem */}
+      <Dialog open={isSendDialogOpen} onOpenChange={setIsSendDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Enviar mensagem</DialogTitle>
+            <DialogDescription>
+              Preencha os campos para enviar uma mensagem pela instância selecionada.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="toNumber">Número de destino</Label>
+              <Input
+                id="toNumber"
+                placeholder="Ex: 5511999999999"
+                value={sendToNumber}
+                onChange={(e) => setSendToNumber(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="messageText">Mensagem</Label>
+              <Textarea
+                id="messageText"
+                placeholder="Digite sua mensagem..."
+                value={sendText}
+                onChange={(e) => setSendText(e.target.value)}
+                rows={5}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsSendDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSendMessage} disabled={isSending || !sendToNumber.trim() || !sendText.trim()}>
+              {isSending ? (
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4 mr-2" />
+              )}
+              {isSending ? 'Enviando...' : 'Enviar'}
             </Button>
           </DialogFooter>
         </DialogContent>

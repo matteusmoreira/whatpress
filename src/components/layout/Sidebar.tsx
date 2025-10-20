@@ -92,6 +92,12 @@ export function Sidebar({ className }: SidebarProps) {
 
   const bottomNavigation = [
     {
+      name: 'SuperAdmin',
+      href: '/superadmin',
+      icon: Crown,
+      current: location.pathname.startsWith('/superadmin')
+    },
+    {
       name: 'Configurações',
       href: '/dashboard/settings',
       icon: Settings,

@@ -34,71 +34,76 @@ export class EvolutionApiService {
     return this.config.baseUrl.replace(/\/+$/, '');
   }
 
+  // Retorna o nome da instância codificado para uso em URLs
+  private getEncodedInstanceName() {
+    return encodeURIComponent(this.config.instanceName);
+  }
+
   // Configurar headers padrão para requisições
   private getHeaders() {
     return {
       'Content-Type': 'application/json',
+      'Accept': 'application/json',
       'apikey': this.config.apiKey,
     };
+  }
+
+  // Helper: tenta múltiplos caminhos (com diferentes prefixes) e retorna o primeiro OK
+  private async fetchWithFallback(paths: string[], init: RequestInit): Promise<Response> {
+    let lastErr: any = null
+    for (const p of paths) {
+      const url = `${this.getBaseUrl()}${p}`
+      try {
+        const resp = await fetch(url, init)
+        if (resp.ok) return resp
+        // Se 404, tenta próximo variant; senão, lança
+        if (resp.status !== 404) {
+          const text = await resp.text().catch(() => '')
+          throw new Error(`HTTP ${resp.status}: ${text || resp.statusText}`)
+        }
+        lastErr = new Error(`HTTP 404 em ${url}`)
+      } catch (e) {
+        lastErr = e
+      }
+    }
+    throw lastErr || new Error('Falha na requisição com todos os caminhos')
   }
 
   // Criar instância do WhatsApp
   async createInstance(): Promise<any> {
     try {
-      const defaultWebhook = (typeof window !== 'undefined' && window.location.hostname === 'localhost')
-        ? 'http://localhost:3001/api/webhook'
-        : `${window.location.origin}/api/webhook`;
-      const webhookUrl = import.meta.env.VITE_WEBHOOK_URL || defaultWebhook;
-
-      const response = await fetch(`${this.getBaseUrl()}/instance/create`, {
+      const response = await this.fetchWithFallback([
+        `/instance/create`,
+        `/api/instance/create`,
+        `/api/v1/instance/create`
+      ], {
         method: 'POST',
         headers: this.getHeaders(),
         body: JSON.stringify({
           instanceName: this.config.instanceName,
-          integration: 'WHATSAPP-BAILEYS',
           qrcode: true,
-          markMessagesRead: true,
-          delayMessage: 1000,
-          presenceUpdate: true,
-          webhook: {
-            url: webhookUrl,
-            byEvents: true,
-            base64: false,
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            events: [
-              'messages.upsert',
-              'connection.update',
-              'qr.updated',
-              'instance.status'
-            ]
-          }
+          integration: 'WHATSAPP-BAILEYS'
         })
-      });
+      })
 
-      if (!response.ok) {
-        throw new Error(`Erro ao criar instância: ${response.statusText}`);
-      }
-
-      return await response.json();
+      return await response.json()
     } catch (error) {
-      console.error('Erro ao criar instância:', error);
-      throw error;
+      console.error('Erro ao criar instância:', error)
+      throw error
     }
   }
 
   // Conectar instância (gerar QR Code)
   async connectInstance(): Promise<any> {
     try {
-      const response = await fetch(`${this.getBaseUrl()}/instance/connect/${this.config.instanceName}`, {
+      const response = await this.fetchWithFallback([
+        `/instance/connect/${this.getEncodedInstanceName()}`,
+        `/api/instance/connect/${this.getEncodedInstanceName()}`,
+        `/api/v1/instance/connect/${this.getEncodedInstanceName()}`
+      ], {
         method: 'GET',
         headers: this.getHeaders(),
       });
-
-      if (!response.ok) {
-        throw new Error(`Erro ao conectar instância: ${response.statusText}`);
-      }
 
       const data = await response.json();
       // Normalizar possíveis formatos v2
@@ -121,33 +126,44 @@ export class EvolutionApiService {
   // Verificar status da instância
   async getInstanceStatus(): Promise<any> {
     try {
-      const response = await fetch(`${this.getBaseUrl()}/instance/connectionState/${this.config.instanceName}`, {
+      const query = `?instanceName=${this.getEncodedInstanceName()}`
+      const response = await this.fetchWithFallback([
+        `/instance/fetchInstances${query}`,
+        `/api/instance/fetchInstances${query}`,
+        `/api/v1/instance/fetchInstances${query}`
+      ], {
         method: 'GET',
         headers: this.getHeaders(),
-      });
+      })
 
-      if (!response.ok) {
-        throw new Error(`Erro ao verificar status: ${response.statusText}`);
+      const data = await response.json()
+      const info = Array.isArray(data) && data.length > 0 ? data[0] : data
+      const connectionStatus = info?.connectionStatus || info?.status || 'unknown'
+
+      return {
+        state: connectionStatus,
+        status: info?.status,
+        instanceName: info?.instanceName,
+        info,
       }
-
-      return await response.json();
     } catch (error) {
-      console.error('Erro ao verificar status:', error);
-      throw error;
+      console.error('Erro ao verificar status:', error)
+      throw error
     }
   }
 
   // Obter informações detalhadas da instância
   async getInstanceInfo(): Promise<any> {
     try {
-      const response = await fetch(`${this.getBaseUrl()}/instance/fetchInstances?instanceName=${this.config.instanceName}`, {
+      const query = `?instanceName=${this.getEncodedInstanceName()}`
+      const response = await this.fetchWithFallback([
+        `/instance/fetchInstances${query}`,
+        `/api/instance/fetchInstances${query}`,
+        `/api/v1/instance/fetchInstances${query}`
+      ], {
         method: 'GET',
         headers: this.getHeaders(),
       });
-
-      if (!response.ok) {
-        throw new Error(`Erro ao obter informações da instância: ${response.statusText}`);
-      }
 
       const result = await response.json();
       
@@ -166,7 +182,11 @@ export class EvolutionApiService {
   // Enviar mensagem de texto
   async sendTextMessage(to: string, message: string): Promise<any> {
     try {
-      const response = await fetch(`${this.getBaseUrl()}/message/sendText/${this.config.instanceName}`, {
+      const response = await this.fetchWithFallback([
+        `/message/sendText/${this.getEncodedInstanceName()}`,
+        `/api/message/sendText/${this.getEncodedInstanceName()}`,
+        `/api/v1/message/sendText/${this.getEncodedInstanceName()}`
+      ], {
         method: 'POST',
         headers: this.getHeaders(),
         body: JSON.stringify({
@@ -175,10 +195,6 @@ export class EvolutionApiService {
           delay: 1000
         })
       });
-
-      if (!response.ok) {
-        throw new Error(`Erro ao enviar mensagem: ${response.statusText}`);
-      }
 
       return await response.json();
     } catch (error) {
@@ -194,7 +210,11 @@ export class EvolutionApiService {
                      type === 'document' ? 'sendMedia' :
                      type === 'audio' ? 'sendWhatsAppAudio' : 'sendMedia';
 
-      const response = await fetch(`${this.getBaseUrl()}/message/${endpoint}/${this.config.instanceName}`, {
+      const response = await this.fetchWithFallback([
+        `/message/${endpoint}/${this.getEncodedInstanceName()}`,
+        `/api/message/${endpoint}/${this.getEncodedInstanceName()}`,
+        `/api/v1/message/${endpoint}/${this.getEncodedInstanceName()}`
+      ], {
         method: 'POST',
         headers: this.getHeaders(),
         body: JSON.stringify({
@@ -206,10 +226,6 @@ export class EvolutionApiService {
         })
       });
 
-      if (!response.ok) {
-        throw new Error(`Erro ao enviar mídia: ${response.statusText}`);
-      }
-
       return await response.json();
     } catch (error) {
       console.error('Erro ao enviar mídia:', error);
@@ -220,14 +236,14 @@ export class EvolutionApiService {
   // Buscar contatos
   async getContacts(): Promise<WhatsAppContact[]> {
     try {
-      const response = await fetch(`${this.getBaseUrl()}/chat/findContacts/${this.config.instanceName}`, {
+      const response = await this.fetchWithFallback([
+        `/chat/findContacts/${this.getEncodedInstanceName()}`,
+        `/api/chat/findContacts/${this.getEncodedInstanceName()}`,
+        `/api/v1/chat/findContacts/${this.getEncodedInstanceName()}`
+      ], {
         method: 'GET',
         headers: this.getHeaders(),
       });
-
-      if (!response.ok) {
-        throw new Error(`Erro ao buscar contatos: ${response.statusText}`);
-      }
 
       const data = await response.json();
       return data.map((contact: any) => ({
@@ -245,7 +261,11 @@ export class EvolutionApiService {
   // Buscar mensagens de uma conversa
   async getMessages(contactNumber: string, limit: number = 50): Promise<WhatsAppMessage[]> {
     try {
-      const response = await fetch(`${this.getBaseUrl()}/chat/findMessages/${this.config.instanceName}`, {
+      const response = await this.fetchWithFallback([
+        `/chat/findMessages/${this.getEncodedInstanceName()}`,
+        `/api/chat/findMessages/${this.getEncodedInstanceName()}`,
+        `/api/v1/chat/findMessages/${this.getEncodedInstanceName()}`
+      ], {
         method: 'POST',
         headers: this.getHeaders(),
         body: JSON.stringify({
@@ -255,10 +275,6 @@ export class EvolutionApiService {
           limit: limit
         })
       });
-
-      if (!response.ok) {
-        throw new Error(`Erro ao buscar mensagens: ${response.statusText}`);
-      }
 
       const data = await response.json();
       return data.map((msg: any) => ({
@@ -288,14 +304,14 @@ export class EvolutionApiService {
   // Deletar instância
   async deleteInstance(): Promise<any> {
     try {
-      const response = await fetch(`${this.getBaseUrl()}/instance/delete/${this.config.instanceName}`, {
+      const response = await this.fetchWithFallback([
+        `/instance/delete/${this.getEncodedInstanceName()}`,
+        `/api/instance/delete/${this.getEncodedInstanceName()}`,
+        `/api/v1/instance/delete/${this.getEncodedInstanceName()}`
+      ], {
         method: 'DELETE',
         headers: this.getHeaders(),
       });
-
-      if (!response.ok) {
-        throw new Error(`Erro ao deletar instância: ${response.statusText}`);
-      }
 
       return await response.json();
     } catch (error) {
@@ -307,14 +323,14 @@ export class EvolutionApiService {
   // Fazer logout da instância
   async logoutInstance(): Promise<any> {
     try {
-      const response = await fetch(`${this.getBaseUrl()}/instance/logout/${this.config.instanceName}`, {
+      const response = await this.fetchWithFallback([
+        `/instance/logout/${this.getEncodedInstanceName()}`,
+        `/api/instance/logout/${this.getEncodedInstanceName()}`,
+        `/api/v1/instance/logout/${this.getEncodedInstanceName()}`
+      ], {
         method: 'POST',
         headers: this.getHeaders(),
       });
-
-      if (!response.ok) {
-        throw new Error(`Erro ao fazer logout: ${response.statusText}`);
-      }
 
       return await response.json();
     } catch (error) {

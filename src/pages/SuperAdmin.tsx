@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -16,7 +16,11 @@ import {
   Activity,
   DollarSign,
   TrendingUp,
-  AlertTriangle
+  AlertTriangle,
+  Gauge,
+  Edit,
+  Eye,
+  RefreshCw
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -24,49 +28,21 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-
-// Mock data para demonstração
-const mockTenants = [
-  {
-    id: 1,
-    name: 'Empresa Alpha',
-    domain: 'alpha.whatpress.com',
-    plan: 'Enterprise',
-    status: 'active',
-    users: 45,
-    campaigns: 128,
-    whatsappConnections: 3,
-    monthlyRevenue: 2500,
-    createdAt: '2024-01-15',
-    lastActivity: '2024-01-20'
-  },
-  {
-    id: 2,
-    name: 'Beta Solutions',
-    domain: 'beta.whatpress.com',
-    plan: 'Professional',
-    status: 'active',
-    users: 12,
-    campaigns: 45,
-    whatsappConnections: 1,
-    monthlyRevenue: 890,
-    createdAt: '2024-01-10',
-    lastActivity: '2024-01-19'
-  },
-  {
-    id: 3,
-    name: 'Gamma Corp',
-    domain: 'gamma.whatpress.com',
-    plan: 'Starter',
-    status: 'suspended',
-    users: 8,
-    campaigns: 23,
-    whatsappConnections: 1,
-    monthlyRevenue: 290,
-    createdAt: '2024-01-05',
-    lastActivity: '2024-01-18'
-  }
-]
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useTenants } from '@/hooks/useTenants'
+import { useQuotas } from '@/hooks/useQuotas'
+import { QuotaGrid, QuotaProgress } from '@/components/ui/quota-progress'
+import { supabase } from '@/lib/supabase'
+import { toast } from 'sonner'
 
 const mockStats = [
   {
@@ -99,14 +75,189 @@ const mockStats = [
   }
 ]
 
+interface TenantQuotaData {
+  tenant_id: string
+  tenant_name: string
+  plan: string
+  status: string
+  quotas: any
+  usage_percentage: number
+  alerts_count: number
+}
+
+interface QuotaEditForm {
+  max_users: number
+  max_contacts: number
+  max_whatsapp_connections: number
+  max_message_templates: number
+  max_automations: number
+  max_monthly_messages: number
+}
+
 export default function SuperAdmin() {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedTab, setSelectedTab] = useState('overview')
+  const [tenantsQuotaData, setTenantsQuotaData] = useState<TenantQuotaData[]>([])
+  const [quotasLoading, setQuotasLoading] = useState(false)
+  const [selectedTenantForQuota, setSelectedTenantForQuota] = useState<string | null>(null)
+  const [quotaEditForm, setQuotaEditForm] = useState<QuotaEditForm>({
+    max_users: 0,
+    max_contacts: 0,
+    max_whatsapp_connections: 0,
+    max_message_templates: 0,
+    max_automations: 0,
+    max_monthly_messages: 0
+  })
+  const [isQuotaDialogOpen, setIsQuotaDialogOpen] = useState(false)
 
-  const filteredTenants = mockTenants.filter(tenant =>
-    tenant.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    tenant.domain.toLowerCase().includes(searchTerm.toLowerCase())
+  const { tenants, selectedTenantId, selectTenant, createTenant, loadMyTenants, loading, error } = useTenants()
+
+  // Carregar dados de quotas de todos os tenants
+  const loadTenantsQuotaData = useCallback(async () => {
+    setQuotasLoading(true)
+    try {
+      const { data: quotasData, error: quotasError } = await supabase
+        .from('tenant_quotas')
+        .select(`
+          *,
+          tenants!inner(id, name, plan, status)
+        `)
+
+      if (quotasError) throw quotasError
+
+      const { data: alertsData, error: alertsError } = await supabase
+        .from('quota_alerts')
+        .select('tenant_id, id')
+        .eq('is_read', false)
+
+      if (alertsError) throw alertsError
+
+      const alertsCount = alertsData?.reduce((acc: Record<string, number>, alert) => {
+        acc[alert.tenant_id] = (acc[alert.tenant_id] || 0) + 1
+        return acc
+      }, {}) || {}
+
+      const processedData: TenantQuotaData[] = quotasData?.map((quota: any) => {
+        const totalUsage = (
+          (quota.used_users / Math.max(quota.max_users, 1)) +
+          (quota.used_contacts / Math.max(quota.max_contacts, 1)) +
+          (quota.used_whatsapp_connections / Math.max(quota.max_whatsapp_connections, 1)) +
+          (quota.used_message_templates / Math.max(quota.max_message_templates, 1)) +
+          (quota.used_automations / Math.max(quota.max_automations, 1)) +
+          (quota.used_monthly_messages / Math.max(quota.max_monthly_messages, 1))
+        ) / 6 * 100
+
+        return {
+          tenant_id: quota.tenant_id,
+          tenant_name: quota.tenants.name,
+          plan: quota.tenants.plan,
+          status: quota.tenants.status,
+          quotas: quota,
+          usage_percentage: Math.round(totalUsage),
+          alerts_count: alertsCount[quota.tenant_id] || 0
+        }
+      }) || []
+
+      setTenantsQuotaData(processedData)
+    } catch (error: any) {
+      console.error('Erro ao carregar dados de quotas:', error)
+      toast.error('Erro ao carregar dados de quotas')
+    } finally {
+      setQuotasLoading(false)
+    }
+  }, [])
+
+  // Atualizar quotas de um tenant
+  const updateTenantQuotas = useCallback(async (tenantId: string, quotas: QuotaEditForm) => {
+    try {
+      const { error } = await supabase
+        .from('tenant_quotas')
+        .update(quotas)
+        .eq('tenant_id', tenantId)
+
+      if (error) throw error
+
+      toast.success('Quotas atualizadas com sucesso!')
+      setIsQuotaDialogOpen(false)
+      loadTenantsQuotaData()
+    } catch (error: any) {
+      console.error('Erro ao atualizar quotas:', error)
+      toast.error('Erro ao atualizar quotas')
+    }
+  }, [loadTenantsQuotaData])
+
+  // Abrir dialog de edição de quotas
+  const openQuotaEditDialog = useCallback(async (tenantId: string) => {
+    const tenantData = tenantsQuotaData.find(t => t.tenant_id === tenantId)
+    if (!tenantData) return
+
+    setQuotaEditForm({
+      max_users: tenantData.quotas.max_users,
+      max_contacts: tenantData.quotas.max_contacts,
+      max_whatsapp_connections: tenantData.quotas.max_whatsapp_connections,
+      max_message_templates: tenantData.quotas.max_message_templates,
+      max_automations: tenantData.quotas.max_automations,
+      max_monthly_messages: tenantData.quotas.max_monthly_messages
+    })
+    setSelectedTenantForQuota(tenantId)
+    setIsQuotaDialogOpen(true)
+  }, [tenantsQuotaData])
+
+  // Aplicar plano padrão
+  const applyDefaultPlan = useCallback(async (tenantId: string, plan: 'starter' | 'pro' | 'enterprise') => {
+    const defaultQuotas = {
+      starter: {
+        max_users: 2,
+        max_contacts: 1000,
+        max_whatsapp_connections: 1,
+        max_message_templates: 10,
+        max_automations: 5,
+        max_monthly_messages: 5000
+      },
+      pro: {
+        max_users: 10,
+        max_contacts: 10000,
+        max_whatsapp_connections: 5,
+        max_message_templates: 50,
+        max_automations: 25,
+        max_monthly_messages: 50000
+      },
+      enterprise: {
+        max_users: -1, // Ilimitado
+        max_contacts: -1,
+        max_whatsapp_connections: -1,
+        max_message_templates: -1,
+        max_automations: -1,
+        max_monthly_messages: -1
+      }
+    }
+
+    await updateTenantQuotas(tenantId, defaultQuotas[plan])
+  }, [updateTenantQuotas])
+
+  useEffect(() => {
+    loadTenantsQuotaData()
+  }, [loadTenantsQuotaData])
+
+  const filteredTenants = (tenants || []).filter((tenant: any) =>
+    (tenant?.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (tenant?.domain || '').toLowerCase().includes(searchTerm.toLowerCase())
   )
+
+  const filteredQuotaData = tenantsQuotaData.filter(data =>
+    data.tenant_name.toLowerCase().includes(searchTerm.toLowerCase())
+  )
+
+  const handleCreateTenant = useCallback(async () => {
+    const name = window.prompt('Nome do tenant:')
+    if (!name) return
+    const domain = window.prompt('Domínio (opcional):') || undefined
+    try {
+      await createTenant(name, domain)
+    } catch (e: any) {
+      alert(e?.message || 'Erro ao criar tenant')
+    }
+  }, [createTenant])
 
   const getStatusBadge = (status: string) => {
     const variants = {
@@ -118,12 +269,14 @@ export default function SuperAdmin() {
   }
 
   const getPlanBadge = (plan: string) => {
-    const variants = {
-      Enterprise: 'bg-purple-100 text-purple-800 border-purple-200',
-      Professional: 'bg-blue-100 text-blue-800 border-blue-200',
-      Starter: 'bg-gray-100 text-gray-800 border-gray-200'
+    const normalized = (plan || '').toLowerCase()
+    const variants: Record<string, string> = {
+      enterprise: 'bg-purple-100 text-purple-800 border-purple-200',
+      pro: 'bg-blue-100 text-blue-800 border-blue-200',
+      professional: 'bg-blue-100 text-blue-800 border-blue-200',
+      starter: 'bg-gray-100 text-gray-800 border-gray-200'
     }
-    return variants[plan as keyof typeof variants] || variants.Starter
+    return variants[normalized] || variants.starter
   }
 
   return (
@@ -141,19 +294,26 @@ export default function SuperAdmin() {
                 <p className="text-sm text-muted-foreground">Gerenciamento de Tenants e Sistema</p>
               </div>
             </div>
-            <Button className="gap-2">
-              <Plus className="h-4 w-4" />
-              Novo Tenant
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={loadTenantsQuotaData} disabled={quotasLoading}>
+                <RefreshCw className={`h-4 w-4 mr-2 ${quotasLoading ? 'animate-spin' : ''}`} />
+                Atualizar
+              </Button>
+              <Button className="gap-2" onClick={handleCreateTenant} disabled={loading}>
+                <Plus className="h-4 w-4" />
+                Novo Tenant
+              </Button>
+            </div>
           </div>
         </div>
       </div>
 
       <div className="container mx-auto px-6 py-6">
         <Tabs value={selectedTab} onValueChange={setSelectedTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="overview">Visão Geral</TabsTrigger>
             <TabsTrigger value="tenants">Tenants</TabsTrigger>
+            <TabsTrigger value="quotas">Quotas</TabsTrigger>
             <TabsTrigger value="billing">Faturamento</TabsTrigger>
             <TabsTrigger value="settings">Configurações</TabsTrigger>
           </TabsList>
@@ -245,7 +405,7 @@ export default function SuperAdmin() {
                 />
               </div>
               <Button variant="outline">Filtros</Button>
-              <Button>
+              <Button onClick={handleCreateTenant} disabled={loading}>
                 <Plus className="h-4 w-4 mr-2" />
                 Novo Tenant
               </Button>
@@ -259,7 +419,7 @@ export default function SuperAdmin() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {filteredTenants.map((tenant) => (
+                  {filteredTenants.map((tenant: any) => (
                     <div key={tenant.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors">
                       <div className="flex items-center gap-4">
                         <div className="p-2 bg-primary/10 rounded-lg">
@@ -268,24 +428,32 @@ export default function SuperAdmin() {
                         <div>
                           <div className="flex items-center gap-2">
                             <h3 className="font-semibold">{tenant.name}</h3>
-                            <Badge className={getPlanBadge(tenant.plan)}>{tenant.plan}</Badge>
+                            {selectedTenantId === tenant.id && (
+                              <Badge variant="outline" className="border-primary text-primary">Selecionado</Badge>
+                            )}
+                            <Badge className={getPlanBadge(tenant.plan)}>
+                              {(() => {
+                                const p = String(tenant?.plan || 'starter')
+                                return p.charAt(0).toUpperCase() + p.slice(1)
+                              })()}
+                            </Badge>
                             <Badge className={getStatusBadge(tenant.status)}>{tenant.status}</Badge>
                           </div>
-                          <p className="text-sm text-muted-foreground">{tenant.domain}</p>
+                          <p className="text-sm text-muted-foreground">{tenant.domain || '—'}</p>
                         </div>
                       </div>
                       
                       <div className="flex items-center gap-6 text-sm">
                         <div className="text-center">
-                          <p className="font-medium">{tenant.users}</p>
+                          <p className="font-medium">—</p>
                           <p className="text-muted-foreground">Usuários</p>
                         </div>
                         <div className="text-center">
-                          <p className="font-medium">{tenant.campaigns}</p>
+                          <p className="font-medium">—</p>
                           <p className="text-muted-foreground">Campanhas</p>
                         </div>
                         <div className="text-center">
-                          <p className="font-medium">R$ {tenant.monthlyRevenue}</p>
+                          <p className="font-medium">—</p>
                           <p className="text-muted-foreground">Receita/mês</p>
                         </div>
                         
@@ -299,6 +467,7 @@ export default function SuperAdmin() {
                             <DropdownMenuItem>Ver Detalhes</DropdownMenuItem>
                             <DropdownMenuItem>Editar</DropdownMenuItem>
                             <DropdownMenuItem>Configurações</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => selectTenant(tenant.id)}>Selecionar contexto</DropdownMenuItem>
                             <DropdownMenuItem className="text-red-600">Suspender</DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -306,6 +475,158 @@ export default function SuperAdmin() {
                     </div>
                   ))}
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="quotas" className="space-y-6">
+            {/* Search and Filters */}
+            <div className="flex items-center gap-4">
+              <div className="relative flex-1 max-w-sm">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar tenants..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              <Button variant="outline" onClick={loadTenantsQuotaData} disabled={quotasLoading}>
+                <RefreshCw className={`h-4 w-4 mr-2 ${quotasLoading ? 'animate-spin' : ''}`} />
+                Atualizar
+              </Button>
+            </div>
+
+            {/* Quotas Overview */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Gerenciamento de Quotas</CardTitle>
+                <CardDescription>Monitore e ajuste os limites de recursos dos tenants</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {quotasLoading ? (
+                  <div className="text-center py-12">
+                    <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-4" />
+                    <p className="text-muted-foreground">Carregando dados de quotas...</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {filteredQuotaData.map((tenantData) => (
+                      <div key={tenantData.tenant_id} className="p-4 border rounded-lg space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 bg-primary/10 rounded-lg">
+                              <Gauge className="h-5 w-5 text-primary" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h3 className="font-semibold">{tenantData.tenant_name}</h3>
+                                <Badge className={getPlanBadge(tenantData.plan)}>
+                                  {tenantData.plan.charAt(0).toUpperCase() + tenantData.plan.slice(1)}
+                                </Badge>
+                                <Badge className={getStatusBadge(tenantData.status)}>
+                                  {tenantData.status}
+                                </Badge>
+                                {tenantData.alerts_count > 0 && (
+                                  <Badge variant="destructive">
+                                    {tenantData.alerts_count} alertas
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground">
+                                Uso geral: {tenantData.usage_percentage}%
+                              </p>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="outline" size="sm">
+                                  Aplicar Plano
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent>
+                                <DropdownMenuItem onClick={() => applyDefaultPlan(tenantData.tenant_id, 'starter')}>
+                                  Starter
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => applyDefaultPlan(tenantData.tenant_id, 'pro')}>
+                                  Pro
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => applyDefaultPlan(tenantData.tenant_id, 'enterprise')}>
+                                  Enterprise
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                            
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => openQuotaEditDialog(tenantData.tenant_id)}
+                            >
+                              <Edit className="h-4 w-4 mr-2" />
+                              Editar
+                            </Button>
+                          </div>
+                        </div>
+                        
+                        {/* Quota Progress Bars */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          <QuotaProgress
+                            title="Usuários"
+                            used={tenantData.quotas.used_users}
+                            max={tenantData.quotas.max_users}
+                            percentage={tenantData.quotas.max_users > 0 ? Math.round((tenantData.quotas.used_users / tenantData.quotas.max_users) * 100) : 0}
+                            type="users"
+                          />
+                          <QuotaProgress
+                            title="Contatos"
+                            used={tenantData.quotas.used_contacts}
+                            max={tenantData.quotas.max_contacts}
+                            percentage={tenantData.quotas.max_contacts > 0 ? Math.round((tenantData.quotas.used_contacts / tenantData.quotas.max_contacts) * 100) : 0}
+                            type="contacts"
+                          />
+                          <QuotaProgress
+                            title="Conexões WhatsApp"
+                            used={tenantData.quotas.used_whatsapp_connections}
+                            max={tenantData.quotas.max_whatsapp_connections}
+                            percentage={tenantData.quotas.max_whatsapp_connections > 0 ? Math.round((tenantData.quotas.used_whatsapp_connections / tenantData.quotas.max_whatsapp_connections) * 100) : 0}
+                            type="connections"
+                          />
+                          <QuotaProgress
+                            title="Templates"
+                            used={tenantData.quotas.used_message_templates}
+                            max={tenantData.quotas.max_message_templates}
+                            percentage={tenantData.quotas.max_message_templates > 0 ? Math.round((tenantData.quotas.used_message_templates / tenantData.quotas.max_message_templates) * 100) : 0}
+                            type="templates"
+                          />
+                          <QuotaProgress
+                            title="Automações"
+                            used={tenantData.quotas.used_automations}
+                            max={tenantData.quotas.max_automations}
+                            percentage={tenantData.quotas.max_automations > 0 ? Math.round((tenantData.quotas.used_automations / tenantData.quotas.max_automations) * 100) : 0}
+                            type="automations"
+                          />
+                          <QuotaProgress
+                            title="Mensagens/mês"
+                            used={tenantData.quotas.used_monthly_messages}
+                            max={tenantData.quotas.max_monthly_messages}
+                            percentage={tenantData.quotas.max_monthly_messages > 0 ? Math.round((tenantData.quotas.used_monthly_messages / tenantData.quotas.max_monthly_messages) * 100) : 0}
+                            type="messages"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                    
+                    {filteredQuotaData.length === 0 && (
+                      <div className="text-center py-12">
+                        <Gauge className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                        <h3 className="text-lg font-semibold mb-2">Nenhum tenant encontrado</h3>
+                        <p className="text-muted-foreground">Tente ajustar os filtros de busca</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -343,6 +664,109 @@ export default function SuperAdmin() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Dialog para editar quotas */}
+      <Dialog open={isQuotaDialogOpen} onOpenChange={setIsQuotaDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Editar Quotas do Tenant</DialogTitle>
+            <DialogDescription>
+              Ajuste os limites de recursos para este tenant. Use -1 para ilimitado.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="grid grid-cols-2 gap-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="max_users">Máximo de Usuários</Label>
+              <Input
+                id="max_users"
+                type="number"
+                value={quotaEditForm.max_users}
+                onChange={(e) => setQuotaEditForm(prev => ({
+                  ...prev,
+                  max_users: parseInt(e.target.value) || 0
+                }))}
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="max_contacts">Máximo de Contatos</Label>
+              <Input
+                id="max_contacts"
+                type="number"
+                value={quotaEditForm.max_contacts}
+                onChange={(e) => setQuotaEditForm(prev => ({
+                  ...prev,
+                  max_contacts: parseInt(e.target.value) || 0
+                }))}
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="max_whatsapp_connections">Conexões WhatsApp</Label>
+              <Input
+                id="max_whatsapp_connections"
+                type="number"
+                value={quotaEditForm.max_whatsapp_connections}
+                onChange={(e) => setQuotaEditForm(prev => ({
+                  ...prev,
+                  max_whatsapp_connections: parseInt(e.target.value) || 0
+                }))}
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="max_message_templates">Templates de Mensagem</Label>
+              <Input
+                id="max_message_templates"
+                type="number"
+                value={quotaEditForm.max_message_templates}
+                onChange={(e) => setQuotaEditForm(prev => ({
+                  ...prev,
+                  max_message_templates: parseInt(e.target.value) || 0
+                }))}
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="max_automations">Máximo de Automações</Label>
+              <Input
+                id="max_automations"
+                type="number"
+                value={quotaEditForm.max_automations}
+                onChange={(e) => setQuotaEditForm(prev => ({
+                  ...prev,
+                  max_automations: parseInt(e.target.value) || 0
+                }))}
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="max_monthly_messages">Mensagens por Mês</Label>
+              <Input
+                id="max_monthly_messages"
+                type="number"
+                value={quotaEditForm.max_monthly_messages}
+                onChange={(e) => setQuotaEditForm(prev => ({
+                  ...prev,
+                  max_monthly_messages: parseInt(e.target.value) || 0
+                }))}
+              />
+            </div>
+          </div>
+          
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setIsQuotaDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={() => selectedTenantForQuota && updateTenantQuotas(selectedTenantForQuota, quotaEditForm)}
+            >
+              Salvar Alterações
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

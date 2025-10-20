@@ -24,11 +24,22 @@ import SupportPage from './pages/Support'
 import RequireAuth from '@/components/auth/RequireAuth'
 import './App.css'
 import { Toaster } from '@/components/ui/toaster'
+import { isSupabaseConfigured } from '@/lib/supabase'
 
 function App() {
   return (
     <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-      <Router>
+      {!isSupabaseConfigured && (
+        <div className="bg-yellow-100 dark:bg-yellow-900 border-b border-yellow-300 dark:border-yellow-700 text-yellow-900 dark:text-yellow-200 text-sm px-4 py-2 text-center">
+          Supabase não está configurado. Algumas funcionalidades podem ficar indisponíveis. Consulte o arquivo <span className="font-medium">docs/supabase-setup.md</span> no repositório.
+        </div>
+      )}
+      <Router
+        future={{
+          v7_startTransition: true,
+          v7_relativeSplatPath: true,
+        }}
+      >
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
