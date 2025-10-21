@@ -3,9 +3,9 @@ import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 
 // Read env vars from Vercel Environment
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || ''
-const SUPABASE_URL = process.env.SUPABASE_URL
-const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE
+const WEBHOOK_SECRET = (process.env.WEBHOOK_SECRET || '').trim()
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim()
+const SUPABASE_SERVICE_ROLE = (process.env.SUPABASE_SERVICE_ROLE || '').trim()
 
 // Initialize Supabase service client (server-side only)
 const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE

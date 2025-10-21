@@ -415,38 +415,58 @@ export default function WhatsAppConnections() {
                     </div>
 
                     {/* QR Code se estiver conectando */}
-                    {instance.status === 'connecting' && instance.qr_code && (
+                    {instance.status === 'connecting' && (
                       <div className="border rounded-lg p-4 bg-muted/50">
                         <div className="flex items-center gap-4">
                           <div className="w-24 h-24 bg-white rounded-lg flex items-center justify-center">
-                            <img 
-                              src={instance.qr_code} 
-                              alt="QR Code" 
-                              className="w-20 h-20" 
-                            />
+                            {instance.qr_code ? (
+                              <img 
+                                src={instance.qr_code} 
+                                alt="QR Code" 
+                                className="w-20 h-20" 
+                                onError={(e) => {
+                                  console.error('Erro ao carregar QR Code:', e)
+                                  // Tentar recarregar o QR code
+                                  checkConnectionStatus(instance.id)
+                                }}
+                              />
+                            ) : (
+                              <div className="flex flex-col items-center justify-center text-muted-foreground">
+                                <QrCode className="w-8 h-8 mb-1" />
+                                <span className="text-xs">Gerando...</span>
+                              </div>
+                            )}
                           </div>
                           <div className="flex-1">
-                            <h4 className="font-medium mb-1">Escaneie o QR Code</h4>
+                            <h4 className="font-medium mb-1">
+                              {instance.qr_code ? 'Escaneie o QR Code' : 'Aguardando QR Code'}
+                            </h4>
                             <p className="text-sm text-muted-foreground">
-                              Use o WhatsApp do seu celular para escanear
+                              {instance.qr_code 
+                                ? 'Use o WhatsApp do seu celular para escanear'
+                                : 'Gerando código de conexão...'
+                              }
                             </p>
                           </div>
                           <div className="flex items-center gap-2 ml-auto">
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => { setSelectedInstance(instance); setIsQRDialogOpen(true); }}
-                            >
-                              <Maximize2 className="w-4 h-4 mr-2" />
-                              Ampliar QR Code
-                            </Button>
+                            {instance.qr_code && (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => { setSelectedInstance(instance); setIsQRDialogOpen(true); }}
+                              >
+                                <Maximize2 className="w-4 h-4 mr-2" />
+                                Ampliar QR Code
+                              </Button>
+                            )}
                             <Button
                               variant="outline"
                               size="sm"
                               onClick={() => checkConnectionStatus(instance.id)}
+                              disabled={loading}
                             >
-                              <RefreshCw className="w-4 h-4 mr-2" />
-                              Atualizar status
+                              <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                              {instance.qr_code ? 'Atualizar status' : 'Gerar QR Code'}
                             </Button>
                           </div>
                         </div>

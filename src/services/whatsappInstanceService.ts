@@ -148,6 +148,8 @@ export class WhatsAppInstanceService {
   // Conectar instância (gerar QR Code ou Código de Pareamento)
   async connectInstance(instanceId: string, tenantId?: string): Promise<{ qrCode?: string; pairingCode?: string; status: WhatsAppInstance['status'] }> {
     try {
+      console.log(`🔗 Iniciando conexão da instância: ${instanceId}`)
+      
       const { data: { user }, error: userError } = await supabase.auth.getUser()
       if (userError || !user) {
         throw new Error('Usuário não autenticado')
@@ -162,92 +164,68 @@ export class WhatsAppInstanceService {
         .single()
 
       if (dbError || !instance) {
+        console.error('❌ Instância não encontrada no banco:', dbError?.message)
         throw new Error('Instância não encontrada')
       }
 
-      // Atualizar status para connecting
-      await this.updateInstanceStatus(instanceId, 'connecting')
+      console.log(`📱 Instância encontrada: ${instance.name} (${instance.api_key})`)
 
-      // Conectar na Evolution API
+      // Configurar Evolution API
       const evolutionService = new EvolutionApiService({
         baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
         apiKey: import.meta.env.VITE_EVOLUTION_API_KEY || 'your-api-key',
         instanceName: instance.api_key || instance.name
       })
 
-      // Garantir webhook configurado antes de conectar (idempotente)
+      // Configurar webhook (não crítico)
       if (instance.webhook_url) {
+        console.log(`🔗 Configurando webhook: ${instance.webhook_url}`)
         try {
-          await evolutionService.setWebhookForInstance(instance.webhook_url, {
-            webhook_by_events: false,
-            webhook_base64: true,
-            events: ['QRCODE_UPDATED','CONNECTION_UPDATE','MESSAGES_UPSERT','SEND_MESSAGE'],
-            enabled: true
-          })
-          console.log('Webhook verificado/configurado antes de conectar:', instance.webhook_url)
-        } catch (err) {
-          console.warn('Falha ao configurar webhook antes de conectar (seguindo mesmo assim):', (err as any)?.message || err)
+          await evolutionService.setWebhookForInstance(instance.webhook_url)
+          console.log('✅ Webhook configurado com sucesso')
+        } catch (webhookError) {
+          console.warn('⚠️ Falha ao configurar webhook (continuando mesmo assim):', webhookError)
         }
       }
+
+      // Atualizar status para "connecting"
+      await this.updateInstanceStatus(instanceId, 'connecting')
+      console.log('📊 Status atualizado para "connecting"')
 
       try {
+        console.log('🚀 Iniciando conexão com polling inteligente...')
         const result = await evolutionService.connectInstance()
+        console.log('📡 Resultado da conexão:', JSON.stringify(result, null, 2))
+
+        // Extrair QR code da resposta
+        let qrCode = result?.qrcode
+        let pairingCode = result?.pairingCode
         
-        // Normalizar QR code se presente
-        const qrBase64 = (typeof result?.qrcode === 'string' ? result.qrcode : (result?.qrcode?.base64 ?? undefined))
-        if (qrBase64) {
-          const dataUri = qrBase64.startsWith('data:image') ? qrBase64 : `data:image/png;base64,${qrBase64}`
-          await this.updateInstance(instanceId, {
-            status: 'connecting',
-            qr_code: dataUri
-          })
+        console.log(`🎯 QR Code extraído: ${qrCode ? 'Sim' : 'Não'}`)
+        console.log(`🔑 Pairing Code extraído: ${pairingCode ? 'Sim' : 'Não'}`)
 
-          return { qrCode: dataUri, status: 'connecting' }
+        // Atualizar instância com QR code se disponível
+        if (qrCode) {
+          console.log('💾 Salvando QR code no banco de dados...')
+          await this.updateInstance(instanceId, { qr_code: qrCode })
         }
 
-        // Suporte a Código de Pareamento
-        if (result?.pairingCode) {
-          await this.updateInstance(instanceId, {
-            status: 'connecting'
-          })
+        // Verificar status da conexão
+        const status = this.mapEvolutionStatus(result?.state || 'connecting')
+        console.log(`🔄 Status mapeado: ${status}`)
 
-          return { pairingCode: result.pairingCode, status: 'connecting' }
+        if (status !== 'connecting') {
+          await this.updateInstanceStatus(instanceId, status)
         }
 
-        const status = this.mapEvolutionStatus(result?.state)
-        await this.updateInstanceStatus(instanceId, status)
-        return { status }
-      } catch (evolutionError: any) {
-        console.error('Erro ao conectar instância na Evolution API:', evolutionError)
-        // Se 404: tentar criar a instância na Evolution e reconectar
-        const is404 = String(evolutionError?.message || '').includes('404') || evolutionError?.status === 404
-        if (is404) {
-          console.log('Instância não existe na Evolution. Tentando criar e reconectar...')
-          try {
-            await evolutionService.createInstance()
-            const retry = await evolutionService.connectInstance()
-            const qrBase64 = (typeof retry?.qrcode === 'string' ? retry.qrcode : (retry?.qrcode?.base64 ?? undefined))
-            if (qrBase64) {
-              const dataUri = qrBase64.startsWith('data:image') ? qrBase64 : `data:image/png;base64,${qrBase64}`
-              await this.updateInstance(instanceId, { status: 'connecting', qr_code: dataUri })
-              return { qrCode: dataUri, status: 'connecting' }
-            }
-            if (retry?.pairingCode) {
-              await this.updateInstance(instanceId, { status: 'connecting' })
-              return { pairingCode: retry.pairingCode, status: 'connecting' }
-            }
-            const status = this.mapEvolutionStatus(retry?.state)
-            await this.updateInstanceStatus(instanceId, status)
-            return { status }
-          } catch (retryErr) {
-            console.error('Falha ao criar/reconectar instância na Evolution:', retryErr)
-          }
-        }
+        return { qrCode, pairingCode, status }
+      } catch (connectionError: any) {
+        console.error('❌ Erro ao conectar na Evolution API:', connectionError)
         await this.updateInstanceStatus(instanceId, 'error')
-        return { status: 'error' }
+        throw new Error(`Falha ao conectar instância: ${connectionError.message}`)
       }
-    } catch (error) {
-      console.error('Erro ao conectar instância:', error)
+    } catch (error: any) {
+      console.error('❌ Erro geral ao conectar instância:', error)
       throw error
     }
   }
@@ -360,37 +338,53 @@ export class WhatsAppInstanceService {
     }
   }
 
-  // Desconectar instância (logout na Evolution e atualizar banco)
+  // Desconectar instância
   async disconnectInstance(instanceId: string, tenantId?: string): Promise<void> {
-    const { data: { user }, error: userError } = await supabase.auth.getUser()
-    if (userError || !user) {
-      throw new Error('Usuário não autenticado')
-    }
-
-    const { data: instance, error: dbError } = await supabase
-      .from('whatsapp_instances')
-      .select('*')
-      .eq('id', instanceId)
-      .eq(tenantId ? 'tenant_id' : 'user_id', tenantId ?? user.id)
-      .single()
-
-    if (dbError || !instance) {
-      throw new Error('Instância não encontrada')
-    }
-
-    const evolutionService = new EvolutionApiService({
-      baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
-      apiKey: import.meta.env.VITE_EVOLUTION_API_KEY || 'your-api-key',
-      instanceName: instance.api_key || instance.name
-    })
-
     try {
-      await evolutionService.logoutInstance()
-    } catch (e) {
-      console.warn('Falha ao fazer logout na Evolution API, continuando desconexão local:', e)
-    }
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      if (userError || !user) {
+        throw new Error('Usuário não autenticado')
+      }
 
-    await this.updateInstance(instanceId, { status: 'disconnected', qr_code: null, last_activity: new Date().toISOString() })
+      // Buscar instância no banco
+      const { data: instance, error: dbError } = await supabase
+        .from('whatsapp_instances')
+        .select('*')
+        .eq('id', instanceId)
+        .eq(tenantId ? 'tenant_id' : 'user_id', tenantId ?? user.id)
+        .single()
+
+      if (dbError || !instance) {
+        throw new Error('Instância não encontrada')
+      }
+
+      // Configurar Evolution API
+      const evolutionService = new EvolutionApiService({
+        baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
+        apiKey: import.meta.env.VITE_EVOLUTION_API_KEY || 'your-api-key',
+        instanceName: instance.api_key || instance.name
+      })
+
+      // Tentar fazer logout na Evolution API (não crítico se falhar)
+      try {
+        await evolutionService.logoutInstance()
+        console.log('✅ Logout realizado na Evolution API')
+      } catch (logoutError) {
+        console.warn('⚠️ Falha ao fazer logout na Evolution API (continuando desconexão local):', logoutError)
+      }
+
+      // Atualizar status no banco
+      await this.updateInstance(instanceId, {
+        status: 'disconnected',
+        qr_code: null,
+        phone_number: null
+      })
+
+      console.log('✅ Instância desconectada com sucesso')
+    } catch (error) {
+      console.error('❌ Erro ao desconectar instância:', error)
+      throw error
+    }
   }
 
   // Excluir instância (Evolution API + Banco)

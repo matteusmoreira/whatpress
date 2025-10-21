@@ -2,8 +2,12 @@ import { createClient } from '@supabase/supabase-js'
 
 // Frontend Supabase client
 // Uses Vite environment variables (prefixed with VITE_) defined in .env
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const rawSupabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const rawSupabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+// Sanitize env values to avoid hidden CRLF/newlines breaking WebSocket auth
+const supabaseUrl = String(rawSupabaseUrl || '').replace(/\r?\n/g, '').trim()
+const supabaseAnonKey = String(rawSupabaseAnonKey || '').replace(/\r?\n/g, '').trim()
 const hasEnv = Boolean(supabaseUrl && supabaseAnonKey)
 
 function createNoopClient(): any {
