@@ -16,7 +16,8 @@ import {
   Shield,
   Crown,
   Calendar,
-  Bell
+  Bell,
+  TrendingUp
 } from 'lucide-react'
 
 interface SidebarProps {
@@ -87,6 +88,18 @@ export function Sidebar({ className }: SidebarProps) {
       href: '/dashboard/notifications', 
       icon: Bell, 
       current: location.pathname.startsWith('/dashboard/notifications') 
+    },
+    { 
+      name: 'Quotas', 
+      href: '/dashboard/quotas', 
+      icon: TrendingUp, 
+      current: location.pathname.startsWith('/dashboard/quotas') 
+    },
+    { 
+      name: 'Roles', 
+      href: '/dashboard/roles', 
+      icon: Shield, 
+      current: location.pathname.startsWith('/dashboard/roles') 
     },
   ]
 

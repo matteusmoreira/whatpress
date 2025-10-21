@@ -1,319 +1,349 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useTenant } from '@/hooks/useTenant';
-import { toast } from 'sonner';
-
-export interface QuotaUsage {
-  users: { used: number; max: number; percentage: number };
-  contacts: { used: number; max: number; percentage: number };
-  campaigns: { used: number; max: number; percentage: number };
-  messages: { used: number; max: number; percentage: number };
-  connections: { used: number; max: number; percentage: number };
-  templates: { used: number; max: number; percentage: number };
-  automations: { used: number; max: number; percentage: number };
-}
-
-export interface QuotaAlert {
-  id: string;
-  quota_type: string;
-  threshold_percentage: number;
-  current_usage: number;
-  max_limit: number;
-  alert_message: string;
-  is_read: boolean;
-  created_at: string;
-  expires_at: string;
-}
+import { useAuth } from '@/hooks/useAuth';
 
 export interface TenantQuota {
   id: string;
   tenant_id: string;
   max_users: number;
   max_contacts: number;
-  used_contacts: number;
   max_campaigns: number;
-  max_messages_per_month: number;
-  max_monthly_messages: number;
-  used_messages_current_month: number;
-  current_monthly_messages?: number;
-  max_whatsapp_connections: number;
-  used_whatsapp_connections: number;
-  current_whatsapp_connections?: number;
-  max_message_templates: number;
-  used_message_templates: number;
-  current_message_templates?: number;
-  max_automations: number;
-  used_automations: number;
-  current_automations?: number;
-  current_users?: number;
-  current_contacts?: number;
-  quota_alerts_enabled: boolean;
-  alert_threshold_85: boolean;
-  alert_threshold_100: boolean;
-  is_blocked: boolean;
-  blocked_reason: string | null;
-  blocked_at: string | null;
+  max_connections: number;
+  current_users: number;
+  current_contacts: number;
+  current_campaigns: number;
+  current_connections: number;
+  alert_85_enabled: boolean;
+  alert_100_enabled: boolean;
+  blocked_features: string[];
+  updated_at: string;
+}
+
+export interface QuotaAlert {
+  id: string;
+  tenant_id: string;
+  alert_type: '85_percent' | '100_percent';
+  resource_type: 'users' | 'contacts' | 'campaigns' | 'connections';
+  current_usage: number;
+  max_limit: number;
+  percentage: number;
+  message: string;
+  acknowledged: boolean;
+  acknowledged_by?: string;
+  acknowledged_at?: string;
   created_at: string;
 }
 
+export interface QuotaUsage {
+  resource: 'users' | 'contacts' | 'campaigns' | 'connections';
+  current: number;
+  max: number;
+  percentage: number;
+  status: 'safe' | 'warning' | 'critical' | 'blocked';
+}
+
+export interface QuotaLimits {
+  users: { current: number; max: number; percentage: number };
+  contacts: { current: number; max: number; percentage: number };
+  campaigns: { current: number; max: number; percentage: number };
+  connections: { current: number; max: number; percentage: number };
+}
+
 export const useQuotas = () => {
+  const { user } = useAuth();
   const { currentTenant } = useTenant();
-  const [quotas, setQuotas] = useState<TenantQuota | null>(null);
-  const [quotaUsage, setQuotaUsage] = useState<QuotaUsage | null>(null);
+  const [quota, setQuota] = useState<TenantQuota | null>(null);
   const [alerts, setAlerts] = useState<QuotaAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Calcular percentual de uso
-  const calculatePercentage = useCallback((used: number, max: number): number => {
-    if (max === 0 || max === null) return 0;
-    return Math.round((used / max) * 100);
-  }, []);
+  // Calcular status baseado na porcentagem
+  const getQuotaStatus = (percentage: number): QuotaUsage['status'] => {
+    if (percentage >= 100) return 'blocked';
+    if (percentage >= 85) return 'critical';
+    if (percentage >= 70) return 'warning';
+    return 'safe';
+  };
 
-  // Verificar se quota foi excedida
-  const isQuotaExceeded = useCallback((used: number, max: number): boolean => {
-    if (max === null || max === 0) return false;
-    return used >= max;
-  }, []);
+  // Calcular porcentagem de uso
+  const calculatePercentage = (current: number, max: number): number => {
+    if (max === 0) return 0;
+    return Math.round((current / max) * 100);
+  };
 
-  // Buscar quotas do tenant atual
-  const fetchQuotas = useCallback(async () => {
-    if (!currentTenant?.id) return;
+  // Obter dados de quota do tenant atual
+  const fetchQuota = useCallback(async () => {
+    if (!user || !currentTenant?.id) {
+      setQuota(null);
+      setLoading(false);
+      return;
+    }
 
     try {
       setLoading(true);
       setError(null);
 
-      const { data: quotaData, error: quotaError } = await supabase
+      const { data, error: quotaError } = await supabase
         .from('tenant_quotas')
         .select('*')
         .eq('tenant_id', currentTenant.id)
         .single();
 
-      if (quotaError) throw quotaError;
+      if (quotaError) {
+        if (quotaError.code === 'PGRST116') {
+          // Quota não existe, criar uma padrão
+          const { data: newQuota, error: createError } = await supabase
+            .from('tenant_quotas')
+            .insert({
+              tenant_id: currentTenant.id,
+              max_users: 5,
+              max_contacts: 1000,
+              max_campaigns: 10,
+              max_connections: 2,
+              current_users: 0,
+              current_contacts: 0,
+              current_campaigns: 0,
+              current_connections: 0,
+              alert_85_enabled: true,
+              alert_100_enabled: true,
+              blocked_features: []
+            })
+            .select()
+            .single();
 
-      setQuotas(quotaData);
-
-      // Calcular uso atual de usuários
-      const { count: usersCount } = await supabase
-        .from('user_tenants')
-        .select('*', { count: 'exact', head: true })
-        .eq('tenant_id', currentTenant.id)
-        .eq('status', 'active');
-
-      // Calcular uso atual de campanhas
-      const { count: campaignsCount } = await supabase
-        .from('campaigns')
-        .select('*', { count: 'exact', head: true })
-        .eq('tenant_id', currentTenant.id);
-
-      // Montar objeto de uso
-      const usage: QuotaUsage = {
-        users: {
-          used: usersCount || 0,
-          max: quotaData.max_users,
-          percentage: calculatePercentage(usersCount || 0, quotaData.max_users)
-        },
-        contacts: {
-          used: quotaData.used_contacts,
-          max: quotaData.max_contacts,
-          percentage: calculatePercentage(quotaData.used_contacts, quotaData.max_contacts)
-        },
-        campaigns: {
-          used: campaignsCount || 0,
-          max: quotaData.max_campaigns,
-          percentage: calculatePercentage(campaignsCount || 0, quotaData.max_campaigns)
-        },
-        messages: {
-          used: quotaData.used_messages_current_month,
-          max: quotaData.max_messages_per_month,
-          percentage: calculatePercentage(quotaData.used_messages_current_month, quotaData.max_messages_per_month)
-        },
-        connections: {
-          used: quotaData.used_whatsapp_connections,
-          max: quotaData.max_whatsapp_connections,
-          percentage: calculatePercentage(quotaData.used_whatsapp_connections, quotaData.max_whatsapp_connections)
-        },
-        templates: {
-          used: quotaData.used_message_templates,
-          max: quotaData.max_message_templates,
-          percentage: calculatePercentage(quotaData.used_message_templates, quotaData.max_message_templates)
-        },
-        automations: {
-          used: quotaData.used_automations,
-          max: quotaData.max_automations,
-          percentage: calculatePercentage(quotaData.used_automations, quotaData.max_automations)
+          if (createError) throw createError;
+          setQuota(newQuota);
+        } else {
+          throw quotaError;
         }
-      };
-
-      setQuotaUsage(usage);
-
+      } else {
+        setQuota(data);
+      }
     } catch (err) {
       console.error('Erro ao buscar quotas:', err);
       setError(err instanceof Error ? err.message : 'Erro desconhecido');
     } finally {
       setLoading(false);
     }
-  }, [currentTenant?.id, calculatePercentage]);
+  }, [user, currentTenant?.id]);
 
-  // Buscar alertas ativos
+  // Obter alertas de quota
   const fetchAlerts = useCallback(async () => {
-    if (!currentTenant?.id) return;
+    if (!user || !currentTenant?.id) {
+      setAlerts([]);
+      return;
+    }
 
     try {
-      const { data: alertsData, error: alertsError } = await supabase
+      const { data, error: alertsError } = await supabase
         .from('quota_alerts')
         .select('*')
         .eq('tenant_id', currentTenant.id)
-        .gt('expires_at', new Date().toISOString())
-        .order('created_at', { ascending: false });
+        .eq('acknowledged', false)
+        .order('created_at', { ascending: false })
+        .limit(10);
 
       if (alertsError) throw alertsError;
-
-      setAlerts(alertsData || []);
-
-      // Mostrar alertas não lidos como toast
-      alertsData?.forEach(alert => {
-        if (!alert.is_read) {
-          if (alert.threshold_percentage === 100) {
-            toast.error(alert.alert_message, {
-              duration: 10000,
-              action: {
-                label: 'Fazer Upgrade',
-                onClick: () => {
-                  // Redirecionar para página de planos
-                  window.location.href = '/settings/billing';
-                }
-              }
-            });
-          } else {
-            toast.warning(alert.alert_message, {
-              duration: 8000,
-              action: {
-                label: 'Ver Detalhes',
-                onClick: () => {
-                  // Redirecionar para página de quotas
-                  window.location.href = '/settings/quotas';
-                }
-              }
-            });
-          }
-        }
-      });
-
+      setAlerts(data || []);
     } catch (err) {
       console.error('Erro ao buscar alertas:', err);
     }
-  }, [currentTenant?.id]);
+  }, [user, currentTenant?.id]);
 
-  // Marcar alerta como lido
-  const markAlertAsRead = useCallback(async (alertId: string) => {
-    try {
-      const { error } = await supabase
-        .from('quota_alerts')
-        .update({ is_read: true })
-        .eq('id', alertId);
-
-      if (error) throw error;
-
-      setAlerts(prev => prev.map(alert => 
-        alert.id === alertId ? { ...alert, is_read: true } : alert
-      ));
-
-    } catch (err) {
-      console.error('Erro ao marcar alerta como lido:', err);
-    }
-  }, []);
-
-  // Verificar se pode executar ação baseado na quota
-  const canPerformAction = useCallback((quotaType: keyof QuotaUsage): boolean => {
-    if (!quotaUsage || !quotas) return false;
-    
-    const usage = quotaUsage[quotaType];
-    return !isQuotaExceeded(usage.used, usage.max);
-  }, [quotaUsage, quotas, isQuotaExceeded]);
-
-  // Atualizar uso de quota
-  const updateQuotaUsage = useCallback(async (
-    quotaType: 'contacts' | 'connections' | 'templates' | 'automations' | 'messages' | 'campaigns',
-    increment: number = 1
-  ): Promise<boolean> => {
-    if (!currentTenant?.id) return false;
+  // Atualizar contadores de quota manualmente
+  const refreshQuotaCounters = useCallback(async () => {
+    if (!currentTenant?.id) return;
 
     try {
-      const { data, error } = await supabase.rpc('update_quota_usage', {
-        p_tenant_id: currentTenant.id,
-        p_quota_type: quotaType,
-        p_increment: increment
+      const { error } = await supabase.rpc('update_tenant_quota_counters', {
+        tenant_uuid: currentTenant.id
       });
 
       if (error) throw error;
-
-      // Recarregar quotas após atualização
-      await fetchQuotas();
+      
+      // Recarregar dados após atualização
+      await fetchQuota();
       await fetchAlerts();
-
-      return data; // Retorna true se não excedeu o limite
     } catch (err) {
-      console.error('Erro ao atualizar quota:', err);
-      toast.error('Erro ao atualizar quota');
-      return false;
+      console.error('Erro ao atualizar contadores:', err);
+      setError(err instanceof Error ? err.message : 'Erro ao atualizar contadores');
     }
-  }, [currentTenant?.id, fetchQuotas, fetchAlerts]);
+  }, [currentTenant?.id, fetchQuota, fetchAlerts]);
 
-  // Obter mensagem de upgrade amigável
-  const getUpgradeMessage = useCallback((quotaType: keyof QuotaUsage): string => {
-    const quotaNames = {
-      users: 'usuários',
-      contacts: 'contatos',
-      campaigns: 'campanhas',
-      messages: 'mensagens',
-      connections: 'conexões WhatsApp',
-      templates: 'templates de mensagem',
-      automations: 'automações'
+  // Marcar alerta como reconhecido
+  const acknowledgeAlert = useCallback(async (alertId: string) => {
+    if (!user) return;
+
+    try {
+      const { error } = await supabase
+        .from('quota_alerts')
+        .update({
+          acknowledged: true,
+          acknowledged_by: user.id,
+          acknowledged_at: new Date().toISOString()
+        })
+        .eq('id', alertId);
+
+      if (error) throw error;
+      
+      // Atualizar lista de alertas
+      setAlerts(prev => prev.filter(alert => alert.id !== alertId));
+    } catch (err) {
+      console.error('Erro ao reconhecer alerta:', err);
+    }
+  }, [user]);
+
+  // Verificar se uma funcionalidade está bloqueada
+  const isFeatureBlocked = useCallback((feature: string): boolean => {
+    if (!quota) return false;
+    return quota.blocked_features.includes(feature);
+  }, [quota]);
+
+  // Verificar se pode criar novo recurso
+  const canCreateResource = useCallback((resourceType: 'users' | 'contacts' | 'campaigns' | 'connections'): boolean => {
+    if (!quota) return false;
+
+    switch (resourceType) {
+      case 'users':
+        return quota.current_users < quota.max_users;
+      case 'contacts':
+        return quota.current_contacts < quota.max_contacts;
+      case 'campaigns':
+        return quota.current_campaigns < quota.max_campaigns;
+      case 'connections':
+        return quota.current_connections < quota.max_connections;
+      default:
+        return false;
+    }
+  }, [quota]);
+
+  // Obter limites formatados
+  const getQuotaLimits = useCallback((): QuotaLimits | null => {
+    if (!quota) return null;
+
+    return {
+      users: {
+        current: quota.current_users,
+        max: quota.max_users,
+        percentage: calculatePercentage(quota.current_users, quota.max_users)
+      },
+      contacts: {
+        current: quota.current_contacts,
+        max: quota.max_contacts,
+        percentage: calculatePercentage(quota.current_contacts, quota.max_contacts)
+      },
+      campaigns: {
+        current: quota.current_campaigns,
+        max: quota.max_campaigns,
+        percentage: calculatePercentage(quota.current_campaigns, quota.max_campaigns)
+      },
+      connections: {
+        current: quota.current_connections,
+        max: quota.max_connections,
+        percentage: calculatePercentage(quota.current_connections, quota.max_connections)
+      }
     };
+  }, [quota]);
 
-    return `Você atingiu o limite de ${quotaNames[quotaType]}. Faça upgrade do seu plano para continuar usando esta funcionalidade.`;
-  }, []);
+  // Obter uso detalhado por recurso
+  const getResourceUsage = useCallback((resourceType: 'users' | 'contacts' | 'campaigns' | 'connections'): QuotaUsage | null => {
+    if (!quota) return null;
 
-  // Verificar se tenant está bloqueado
-  const isBlocked = quotas?.is_blocked || false;
+    let current: number, max: number;
 
-  // Contar alertas não lidos
-  const unreadAlertsCount = alerts.filter(alert => !alert.is_read).length;
+    switch (resourceType) {
+      case 'users':
+        current = quota.current_users;
+        max = quota.max_users;
+        break;
+      case 'contacts':
+        current = quota.current_contacts;
+        max = quota.max_contacts;
+        break;
+      case 'campaigns':
+        current = quota.current_campaigns;
+        max = quota.max_campaigns;
+        break;
+      case 'connections':
+        current = quota.current_connections;
+        max = quota.max_connections;
+        break;
+      default:
+        return null;
+    }
+
+    const percentage = calculatePercentage(current, max);
+    const status = getQuotaStatus(percentage);
+
+    return {
+      resource: resourceType,
+      current,
+      max,
+      percentage,
+      status
+    };
+  }, [quota]);
+
+  // Atualizar limites de quota (apenas ADMIN/SUPERADMIN)
+  const updateQuotaLimits = useCallback(async (updates: Partial<Pick<TenantQuota, 'max_users' | 'max_contacts' | 'max_campaigns' | 'max_connections'>>) => {
+    if (!currentTenant?.id) return;
+
+    try {
+      const { error } = await supabase
+        .from('tenant_quotas')
+        .update(updates)
+        .eq('tenant_id', currentTenant.id);
+
+      if (error) throw error;
+      
+      // Recarregar dados
+      await fetchQuota();
+    } catch (err) {
+      console.error('Erro ao atualizar limites:', err);
+      throw err;
+    }
+  }, [currentTenant?.id, fetchQuota]);
 
   // Efeitos
   useEffect(() => {
-    if (currentTenant?.id) {
-      fetchQuotas();
-      fetchAlerts();
-    }
-  }, [currentTenant?.id, fetchQuotas, fetchAlerts]);
+    fetchQuota();
+  }, [fetchQuota]);
 
-  // Subscription para mudanças em tempo real
+  useEffect(() => {
+    fetchAlerts();
+  }, [fetchAlerts]);
+
+  // Subscription para atualizações em tempo real
   useEffect(() => {
     if (!currentTenant?.id) return;
 
-    const quotasSubscription = supabase
-      .channel('quota_changes')
-      .on('postgres_changes', 
-        { 
-          event: '*', 
-          schema: 'public', 
+    const quotaSubscription = supabase
+      .channel('quota-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
           table: 'tenant_quotas',
           filter: `tenant_id=eq.${currentTenant.id}`
-        }, 
+        },
         () => {
-          fetchQuotas();
+          fetchQuota();
         }
       )
-      .on('postgres_changes', 
-        { 
-          event: '*', 
-          schema: 'public', 
+      .subscribe();
+
+    const alertsSubscription = supabase
+      .channel('quota-alerts')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
           table: 'quota_alerts',
           filter: `tenant_id=eq.${currentTenant.id}`
-        }, 
+        },
         () => {
           fetchAlerts();
         }
@@ -321,34 +351,31 @@ export const useQuotas = () => {
       .subscribe();
 
     return () => {
-      quotasSubscription.unsubscribe();
+      quotaSubscription.unsubscribe();
+      alertsSubscription.unsubscribe();
     };
-  }, [currentTenant?.id, fetchQuotas, fetchAlerts]);
+  }, [currentTenant?.id, fetchQuota, fetchAlerts]);
 
   return {
     // Estados
-    quotas,
-    quotaUsage,
+    quota,
     alerts,
     loading,
     error,
-    isBlocked,
-    unreadAlertsCount,
 
-    // Funções
-    fetchQuotas,
-    fetchAlerts,
-    markAlertAsRead,
-    canPerformAction,
-    updateQuotaUsage,
-    getUpgradeMessage,
+    // Funções de consulta
+    getQuotaLimits,
+    getResourceUsage,
+    canCreateResource,
+    isFeatureBlocked,
+
+    // Ações
+    refreshQuotaCounters,
+    acknowledgeAlert,
+    updateQuotaLimits,
+
+    // Utilitários
     calculatePercentage,
-    isQuotaExceeded,
-
-    // Helpers
-    refresh: () => {
-      fetchQuotas();
-      fetchAlerts();
-    }
+    getQuotaStatus
   };
 };

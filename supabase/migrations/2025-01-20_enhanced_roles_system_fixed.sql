@@ -48,14 +48,14 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Função para obter role do usuário em um tenant
-CREATE OR REPLACE FUNCTION public.get_user_role(tenant_id UUID, user_id UUID DEFAULT auth.uid())
+CREATE OR REPLACE FUNCTION public.get_user_role(tenant_id UUID, p_user_id UUID DEFAULT auth.uid())
 RETURNS TEXT AS $$
 DECLARE
   user_role TEXT;
 BEGIN
   SELECT ut.role INTO user_role
   FROM public.user_tenants ut 
-  WHERE ut.user_id = COALESCE(user_id, auth.uid()) 
+  WHERE ut.user_id = COALESCE(p_user_id, auth.uid()) 
   AND ut.tenant_id = tenant_id
   AND ut.status = 'active';
   
@@ -64,7 +64,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Função para obter todos os tenants do usuário com suas roles
-CREATE OR REPLACE FUNCTION public.get_user_tenants(user_id UUID DEFAULT auth.uid())
+CREATE OR REPLACE FUNCTION public.get_user_tenants(p_user_id UUID DEFAULT auth.uid())
 RETURNS TABLE (
   tenant_id UUID,
   tenant_name TEXT,
@@ -86,7 +86,7 @@ BEGIN
     ut.created_at as joined_at
   FROM public.user_tenants ut
   JOIN public.tenants t ON t.id = ut.tenant_id
-  WHERE ut.user_id = COALESCE(user_id, auth.uid())
+  WHERE ut.user_id = COALESCE(p_user_id, auth.uid())
   AND ut.status = 'active'
   ORDER BY ut.created_at DESC;
 END;

@@ -1,6 +1,7 @@
 import { ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
+import { useRoles } from '@/hooks/useRoles'
 
 interface RequireAuthProps {
   children: ReactNode
@@ -8,10 +9,11 @@ interface RequireAuthProps {
 
 export default function RequireAuth({ children }: RequireAuthProps) {
   const { isAuthenticated, loading } = useAuth()
+  const { loading: rolesLoading } = useRoles()
   const location = useLocation()
 
-  // Mostrar loading enquanto verifica a autenticação
-  if (loading) {
+  // Mostrar loading enquanto verifica a autenticação e roles
+  if (loading || rolesLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20 flex items-center justify-center p-4">
         <div className="text-center">

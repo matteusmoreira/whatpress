@@ -21,6 +21,8 @@ import NotificationsPage from './pages/Notifications'
 import MessagesPage from './pages/Messages'
 import SettingsPage from './pages/Settings'
 import SupportPage from './pages/Support'
+import QuotaManagementPage from './pages/QuotaManagement'
+import { RoleManagement } from './pages/RoleManagement'
 import RequireAuth from '@/components/auth/RequireAuth'
 import './App.css'
 import { Toaster } from '@/components/ui/toaster'
@@ -62,6 +64,8 @@ function App() {
             <Route path="scheduling" element={<SchedulingPage />} />
             <Route path="messages" element={<MessagesPage />} />
             <Route path="notifications" element={<NotificationsPage />} />
+            <Route path="quotas" element={<QuotaManagementPage />} />
+            <Route path="roles" element={<RoleManagement />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="support" element={<SupportPage />} />
           </Route>

@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
+import { useTenant } from '@/hooks/useTenant';
 
-export interface UserRole {
+export type UserRoleType = 'SUPERADMIN' | 'ADMIN' | 'USER' | 'NONE';
+
+export interface UserTenantRole {
   tenantId: string;
   tenantName: string;
   tenantPlan: string;
   tenantStatus: string;
-  userRole: 'SUPERADMIN' | 'ADMIN' | 'USER';
+  userRole: UserRoleType;
   userStatus: string;
   joinedAt: string;
 }
@@ -19,53 +22,61 @@ export interface Permission {
 }
 
 export interface UseRolesReturn {
-  userRoles: UserRole[];
-  currentRole: string | null;
+  // Estado
+  userTenants: UserTenantRole[];
+  currentRole: UserRoleType;
+  permissions: Permission[];
+  loading: boolean;
+  error: string | null;
+  
+  // Verificações de role
   isSuperAdmin: boolean;
   isAdmin: boolean;
   isUser: boolean;
-  loading: boolean;
-  error: string | null;
+  
+  // Verificações de permissão
+  hasPermission: (resource: string, action: string) => boolean;
+  canAccess: (resource: string, action?: string) => boolean;
   checkPermission: (resource: string, action: string, tenantId?: string) => Promise<boolean>;
-  getUserTenants: () => Promise<UserRole[]>;
+  
+  // Ações
+  getUserTenants: () => Promise<UserTenantRole[]>;
   refreshRoles: () => Promise<void>;
+  switchTenant: (tenantId: string) => Promise<void>;
   logAction: (action: string, resource: string, resourceId?: string, details?: any) => Promise<void>;
 }
 
-export const useRoles = (tenantId?: string): UseRolesReturn => {
+export const useRoles = (): UseRolesReturn => {
   const { user } = useAuth();
-  const [userRoles, setUserRoles] = useState<UserRole[]>([]);
-  const [currentRole, setCurrentRole] = useState<string | null>(null);
+  const { currentTenant } = useTenant();
+  
+  const [userTenants, setUserTenants] = useState<UserTenantRole[]>([]);
+  const [currentRole, setCurrentRole] = useState<UserRoleType>('NONE');
+  const [permissions, setPermissions] = useState<Permission[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Verificar se é SuperAdmin
-  const isSuperAdmin = userRoles.some(role => role.userRole === 'SUPERADMIN');
-  
-  // Verificar se é Admin (em qualquer tenant ou no tenant específico)
-  const isAdmin = tenantId 
-    ? userRoles.some(role => role.tenantId === tenantId && ['SUPERADMIN', 'ADMIN'].includes(role.userRole))
-    : userRoles.some(role => ['SUPERADMIN', 'ADMIN'].includes(role.userRole));
-  
-  // Verificar se é User
-  const isUser = userRoles.some(role => role.userRole === 'USER');
+  // Verificações de role
+  const isSuperAdmin = currentRole === 'SUPERADMIN';
+  const isAdmin = currentRole === 'ADMIN' || isSuperAdmin;
+  const isUser = currentRole === 'USER' || isAdmin;
 
   // Buscar roles do usuário
-  const getUserTenants = async (): Promise<UserRole[]> => {
+  const getUserTenants = async (): Promise<UserTenantRole[]> => {
     if (!user?.id) return [];
 
     try {
       const { data, error } = await supabase.rpc('get_user_tenants', {
-        user_id: user.id
+        p_user_id: user.id
       });
 
       if (!error && data) {
-        const roles: UserRole[] = data?.map((item: any) => ({
+        const roles: UserTenantRole[] = data?.map((item: any) => ({
           tenantId: item.tenant_id,
           tenantName: item.tenant_name,
           tenantPlan: item.tenant_plan,
           tenantStatus: item.tenant_status,
-          userRole: item.user_role,
+          userRole: item.user_role as UserRoleType,
           userStatus: item.user_status,
           joinedAt: item.joined_at
         })) || [];
@@ -82,26 +93,28 @@ export const useRoles = (tenantId?: string): UseRolesReturn => {
         .from('user_tenants')
         .select(`
           role, status, created_at,
-          tenants (
+          tenants!inner (
             id, name, plan, status
           )
         `)
-        .eq('user_id', user.id);
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .eq('tenants.status', 'active');
 
       if (utError) {
         console.error('Fallback user_tenants join falhou:', utError);
         return [];
       }
 
-      const roles: UserRole[] = (utData || []).map((item: any) => ({
+      const roles: UserTenantRole[] = (utData || []).map((item: any) => ({
         tenantId: item.tenants?.id,
         tenantName: item.tenants?.name,
         tenantPlan: item.tenants?.plan,
         tenantStatus: item.tenants?.status,
-        userRole: item.role,
+        userRole: item.role as UserRoleType,
         userStatus: item.status,
         joinedAt: item.created_at
-      })).filter((r: UserRole) => !!r.tenantId) || [];
+      })).filter((r: UserTenantRole) => !!r.tenantId) || [];
 
       return roles;
     } catch (err) {
@@ -110,7 +123,32 @@ export const useRoles = (tenantId?: string): UseRolesReturn => {
     }
   };
 
-  // Verificar permissão específica
+  // Verificar se tem permissão específica (local)
+  const hasPermission = (resource: string, action: string): boolean => {
+    if (currentRole === 'SUPERADMIN') return true;
+    
+    const permission = permissions.find(
+      p => p.resource === resource && p.action === action
+    );
+    
+    return permission?.allowed || false;
+  };
+
+  // Verificar se pode acessar um recurso (qualquer ação)
+  const canAccess = (resource: string, action?: string): boolean => {
+    if (currentRole === 'SUPERADMIN') return true;
+    
+    if (action) {
+      return hasPermission(resource, action);
+    }
+    
+    // Se não especificou ação, verifica se tem qualquer permissão no recurso
+    return permissions.some(
+      p => p.resource === resource && p.allowed
+    );
+  };
+
+  // Verificar permissão específica (via RPC)
   const checkPermission = async (
     resource: string, 
     action: string, 
@@ -118,7 +156,7 @@ export const useRoles = (tenantId?: string): UseRolesReturn => {
   ): Promise<boolean> => {
     if (!user?.id) return false;
 
-    const checkTenantId = targetTenantId || tenantId;
+    const checkTenantId = targetTenantId || currentTenant?.id;
     if (!checkTenantId) return false;
 
     try {
@@ -137,6 +175,35 @@ export const useRoles = (tenantId?: string): UseRolesReturn => {
     }
   };
 
+  // Trocar de tenant
+  const switchTenant = async (tenantId: string) => {
+    if (!user?.id) return;
+
+    try {
+      const { data: userRole, error } = await supabase
+        .rpc('get_user_role', { 
+          tenant_id: tenantId, 
+          p_user_id: user.id 
+        });
+
+      if (!error && userRole) {
+        setCurrentRole(userRole as UserRoleType);
+        
+        // Recarregar permissões
+        const { data: rolePermissions } = await supabase
+          .from('role_permissions')
+          .select('resource, action, allowed')
+          .eq('role', userRole);
+
+        if (rolePermissions) {
+          setPermissions(rolePermissions);
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao trocar tenant:', error);
+    }
+  };
+
   // Registrar ação do usuário
   const logAction = async (
     action: string,
@@ -144,12 +211,12 @@ export const useRoles = (tenantId?: string): UseRolesReturn => {
     resourceId?: string,
     details?: any
   ): Promise<void> => {
-    if (!user?.id || !tenantId) return;
+    if (!user?.id || !currentTenant?.id) return;
 
     try {
       await supabase.rpc('log_user_action', {
         p_user_id: user.id,
-        p_tenant_id: tenantId,
+        p_tenant_id: currentTenant.id,
         p_action: action,
         p_resource: resource,
         p_resource_id: resourceId || null,
@@ -168,21 +235,43 @@ export const useRoles = (tenantId?: string): UseRolesReturn => {
     setError(null);
 
     try {
-      const roles = await getUserTenants();
-      setUserRoles(roles);
+      const tenants = await getUserTenants();
+      setUserTenants(tenants);
 
-      // Definir role atual baseado no tenant
-      if (tenantId) {
-        const currentTenantRole = roles.find(role => role.tenantId === tenantId);
-        setCurrentRole(currentTenantRole?.userRole || 'USER');
-       } else {
-         // Se não há tenant específico, usar a role mais alta
-         const highestRole = roles.find(role => role.userRole === 'SUPERADMIN') ||
-                            roles.find(role => role.userRole === 'ADMIN') ||
-                            roles.find(role => role.userRole === 'USER');
--        setCurrentRole(highestRole?.userRole || null);
-+        setCurrentRole(highestRole?.userRole || 'USER');
-       }
+      // Determinar role atual baseado no tenant ativo
+      let role: UserRoleType = 'NONE';
+      
+      if (currentTenant?.id) {
+        const { data: userRole, error: roleError } = await supabase
+          .rpc('get_user_role', { 
+            tenant_id: currentTenant.id, 
+            p_user_id: user.id 
+          });
+
+        if (!roleError && userRole) {
+          role = userRole as UserRoleType;
+        }
+      } else if (tenants && tenants.length > 0) {
+        // Se não há tenant ativo, usar o primeiro tenant
+        role = tenants[0].userRole;
+      }
+
+      setCurrentRole(role);
+
+      // Carregar permissões para a role atual
+      if (role !== 'NONE') {
+        const { data: rolePermissions, error: permError } = await supabase
+          .from('role_permissions')
+          .select('resource, action, allowed')
+          .eq('role', role);
+
+        if (!permError && rolePermissions) {
+          setPermissions(rolePermissions);
+        }
+      } else {
+        setPermissions([]);
+      }
+
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao carregar roles');
     } finally {
@@ -195,23 +284,35 @@ export const useRoles = (tenantId?: string): UseRolesReturn => {
     if (user?.id) {
       refreshRoles();
     } else {
-      setUserRoles([]);
-      setCurrentRole(null);
+      setUserTenants([]);
+      setCurrentRole('NONE');
+      setPermissions([]);
       setLoading(false);
     }
-  }, [user?.id, tenantId]);
+  }, [user?.id, currentTenant?.id]);
 
   return {
-    userRoles,
+    // Estados
+    userTenants,
     currentRole,
+    permissions,
+    loading,
+    error,
+    
+    // Verificações de role
     isSuperAdmin,
     isAdmin,
     isUser,
-    loading,
-    error,
+    
+    // Verificações de permissão
+    hasPermission,
+    canAccess,
     checkPermission,
+    
+    // Ações
     getUserTenants,
     refreshRoles,
+    switchTenant,
     logAction
   };
 };

@@ -41,6 +41,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useTenants } from '@/hooks/useTenants'
 import { useQuotas } from '@/hooks/useQuotas'
 import { QuotaGrid, QuotaProgress } from '@/components/ui/quota-progress'
+import { SuperAdminOnly } from '@/components/RoleGuard'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 
@@ -280,7 +281,8 @@ export default function SuperAdmin() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <SuperAdminOnly>
+      <div className="min-h-screen bg-background">
       {/* Header */}
       <div className="border-b bg-card">
         <div className="container mx-auto px-6 py-4">
@@ -767,6 +769,7 @@ export default function SuperAdmin() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+        </div>
+    </SuperAdminOnly>
   )
 }

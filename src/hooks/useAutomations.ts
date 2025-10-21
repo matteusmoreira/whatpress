@@ -359,6 +359,11 @@ export function useAutomations() {
     if (user) {
       fetchAutomations()
       fetchStats()
+    } else {
+      // Sem usuário autenticado: expor estado vazio e encerrar loading
+      setAutomations([])
+      setStats(null)
+      setLoading(false)
     }
   }, [user])
 

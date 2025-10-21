@@ -81,6 +81,11 @@ import {
 import { useAutomations } from '@/hooks/useAutomations'
 import type { Automation, AutomationTrigger, AutomationAction, AutomationCondition } from '@/hooks/useAutomations'
 import FlowBuilder from '@/components/FlowBuilder'
+// add auth import
+import { useAuth } from '@/hooks/useAuth'
+// add evolution api + toast imports
+import { useEvolutionApi } from '@/hooks/useEvolutionApi'
+import { toast } from 'sonner'
 
 const TRIGGER_TYPES = [
   {
@@ -180,6 +185,9 @@ export default function Automation() {
     getAutomationsByTrigger
   } = useAutomations()
 
+  const { isAuthenticated } = useAuth()
+  const { instances, sendMessage, loading: evoLoading } = useEvolutionApi()
+
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
   const [filterTrigger, setFilterTrigger] = useState('all')
@@ -188,6 +196,13 @@ export default function Automation() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [selectedAutomation, setSelectedAutomation] = useState<Automation | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+
+  // Test dialog states
+  const [testDialogOpen, setTestDialogOpen] = useState(false)
+  const [testPhone, setTestPhone] = useState('')
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null)
+  const [testing, setTesting] = useState(false)
+  const connectedInstances = instances.filter(i => i.status === 'connected')
 
   const [formData, setFormData] = useState({
     name: '',
@@ -202,7 +217,41 @@ export default function Automation() {
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
 
-  const filteredAutomations = automations.filter(automation => {
+  // Demo mode for unauthenticated users
+  const [demoAutomations] = useState<Automation[]>([
+    {
+      id: 'demo-1',
+      name: "Cupom por palavra-chave",
+      description: "Responde 'promo' com um cupom de desconto",
+      is_active: true,
+      trigger: { type: 'keyword', config: { keywords: ['promo'] } },
+      conditions: [],
+      actions: [
+        { type: 'send_message', config: { message: { content: "Aqui está seu cupom: PROMO10" } } }
+      ],
+      stats: { triggered_count: 58, success_count: 55, error_count: 3 },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      created_by: 'demo'
+    },
+    {
+      id: 'demo-2',
+      name: "Mensagem diária de bom dia",
+      description: "Envia uma mensagem diária às 09:00",
+      is_active: true,
+      trigger: { type: 'schedule', config: { schedule: { type: 'daily', time: '09:00' } } },
+      conditions: [],
+      actions: [
+        { type: 'send_message', config: { message: { content: "Bom dia! ☀️ Tenha um ótimo dia!" } } }
+      ],
+      stats: { triggered_count: 12, success_count: 12, error_count: 0 },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      created_by: 'demo'
+    }
+  ])
+
+  const displayedAutomations = (isAuthenticated ? automations : demoAutomations).filter(automation => {
     const matchesSearch = searchTerm === '' || 
       automation.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       automation.description?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -215,6 +264,36 @@ export default function Automation() {
     
     return matchesSearch && matchesStatus && matchesTrigger
   })
+
+  const demoStats = (() => {
+    const total = demoAutomations.length
+    const active = demoAutomations.filter(a => a.is_active).length
+    const totalTriggered = demoAutomations.reduce((sum, a) => sum + (a.stats.triggered_count || 0), 0)
+    const totalSuccess = demoAutomations.reduce((sum, a) => sum + (a.stats.success_count || 0), 0)
+    const successRate = totalTriggered > 0 ? Math.round((totalSuccess / totalTriggered) * 100) : 0
+    let mostName = 'Nenhuma'
+    let maxCount = 0
+    demoAutomations.forEach(a => {
+      if ((a.stats.triggered_count || 0) > maxCount) {
+        maxCount = a.stats.triggered_count || 0
+        mostName = a.name
+      }
+    })
+    return {
+      total_automations: total,
+      active_automations: active,
+      triggered_today: 0,
+      success_rate: successRate,
+      most_triggered: { name: mostName, count: maxCount }
+    }
+  })()
+
+  const totalAutomationsDisplay = isAuthenticated ? (stats?.total_automations || 0) : demoStats.total_automations
+  const activeAutomationsDisplay = isAuthenticated ? (stats?.active_automations || 0) : demoStats.active_automations
+  const triggeredTodayDisplay = isAuthenticated ? (stats?.triggered_today || 0) : demoStats.triggered_today
+  const successRateDisplay = isAuthenticated ? (stats?.success_rate || 0) : demoStats.success_rate
+  const mostNameDisplay = isAuthenticated ? (stats?.most_triggered?.name || 'Nenhuma') : (demoStats.most_triggered?.name || 'Nenhuma')
+  const mostCountDisplay = isAuthenticated ? (stats?.most_triggered?.count || 0) : (demoStats.most_triggered?.count || 0)
 
   const resetForm = () => {
     setFormData({
@@ -315,6 +394,14 @@ export default function Automation() {
   }
 
   const handleTest = async (automation: Automation) => {
+    // Em ambiente real, abrir diálogo de teste para escolher instância e número
+    if (isAuthenticated) {
+      setSelectedAutomation(automation)
+      setTestDialogOpen(true)
+      setSelectedInstanceId(connectedInstances[0]?.id || null)
+      return
+    }
+    // Fallback de simulação para não autenticados
     try {
       setActionLoading(automation.id)
       await testAutomation(automation.id)
@@ -322,6 +409,49 @@ export default function Automation() {
       console.error('Erro ao testar automação:', error)
     } finally {
       setActionLoading(null)
+    }
+  }
+
+  const handleRunTest = async () => {
+    if (!selectedAutomation) return
+    if (!isAuthenticated) {
+      toast.warning('Faça login para testar em ambiente real')
+      return
+    }
+    if (!selectedInstanceId) {
+      toast.error('Selecione uma instância conectada')
+      return
+    }
+    const phoneDigits = testPhone.replace(/\D/g, '')
+    if (!phoneDigits || phoneDigits.length < 10) {
+      toast.error('Informe um número válido com DDI/DDD')
+      return
+    }
+
+    const instance = instances.find(i => i.id === selectedInstanceId)
+    if (!instance || instance.status !== 'connected') {
+      toast.error('Instância não conectada')
+      return
+    }
+
+    setTesting(true)
+    try {
+      const messageAction = selectedAutomation.actions.find(a => a.type === 'send_message')
+      const text = messageAction?.config?.message?.content || `Teste da automação: ${selectedAutomation.name}`
+      const res = await sendMessage(instance, phoneDigits, text)
+      if (res?.success) {
+        toast.success('Teste enviado via WhatsApp')
+        setTestDialogOpen(false)
+        setTestPhone('')
+        setSelectedInstanceId(null)
+      } else {
+        toast.error('Não foi possível enviar o teste')
+      }
+    } catch (error) {
+      console.error('Erro ao executar teste:', error)
+      toast.error('Erro ao executar teste')
+    } finally {
+      setTesting(false)
     }
   }
 
@@ -396,11 +526,17 @@ export default function Automation() {
           <h1 className="text-3xl font-bold text-foreground">Automações</h1>
           <p className="text-muted-foreground">Crie fluxos automatizados para engajar seus contatos</p>
         </div>
-        <Button className="gap-2" onClick={() => setCreateDialogOpen(true)}>
+        <Button className="gap-2" onClick={() => isAuthenticated && setCreateDialogOpen(true)} disabled={!isAuthenticated} title={!isAuthenticated ? 'Faça login para criar automações' : undefined}>
           <Plus className="h-4 w-4" />
           Nova Automação
         </Button>
       </div>
+
+      {!isAuthenticated && (
+        <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+          Modo demonstração: faça login para criar, salvar e ativar automações. Você pode testar as automações de exemplo.
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -409,8 +545,8 @@ export default function Automation() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Total Automações</p>
-                <p className="text-2xl font-bold text-foreground">{stats?.total_automations || 0}</p>
-                <p className="text-sm text-green-600">{stats?.active_automations || 0} ativas</p>
+                <p className="text-2xl font-bold text-foreground">{totalAutomationsDisplay}</p>
+                <p className="text-sm text-green-600">{activeAutomationsDisplay} ativas</p>
               </div>
               <div className="p-3 rounded-lg bg-primary/10">
                 <Zap className="h-6 w-6 text-blue-600" />
@@ -424,7 +560,7 @@ export default function Automation() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Acionadas Hoje</p>
-                <p className="text-2xl font-bold text-foreground">{stats?.triggered_today || 0}</p>
+                <p className="text-2xl font-bold text-foreground">{triggeredTodayDisplay}</p>
                 <p className="text-sm text-green-600">Execuções</p>
               </div>
               <div className="p-3 rounded-lg bg-primary/10">
@@ -439,7 +575,7 @@ export default function Automation() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Taxa de Sucesso</p>
-                <p className="text-2xl font-bold text-foreground">{stats?.success_rate || 0}%</p>
+                <p className="text-2xl font-bold text-foreground">{successRateDisplay}%</p>
                 <p className="text-sm text-green-600">Média geral</p>
               </div>
               <div className="p-3 rounded-lg bg-primary/10">
@@ -454,8 +590,8 @@ export default function Automation() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Mais Acionada</p>
-                <p className="text-2xl font-bold text-foreground">{stats?.most_triggered?.count || 0}</p>
-                <p className="text-sm text-green-600 truncate">{stats?.most_triggered?.name || 'Nenhuma'}</p>
+                <p className="text-2xl font-bold text-foreground">{mostCountDisplay}</p>
+                <p className="text-sm text-green-600 truncate">{mostNameDisplay}</p>
               </div>
               <div className="p-3 rounded-lg bg-primary/10">
                 <Bot className="h-6 w-6 text-yellow-600" />
@@ -505,7 +641,7 @@ export default function Automation() {
 
       {/* Automations Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredAutomations.length === 0 ? (
+        {displayedAutomations.length === 0 ? (
           <div className="col-span-full">
             <Card>
               <CardContent className="p-12 text-center">
@@ -517,7 +653,7 @@ export default function Automation() {
                     : 'Crie sua primeira automação para começar'}
                 </p>
                 {!searchTerm && filterStatus === 'all' && filterTrigger === 'all' && (
-                  <Button onClick={() => setCreateDialogOpen(true)}>
+                  <Button onClick={() => isAuthenticated && setCreateDialogOpen(true)} disabled={!isAuthenticated} title={!isAuthenticated ? 'Faça login para criar automações' : undefined}>
                     <Plus className="h-4 w-4 mr-2" />
                     Criar Primeira Automação
                   </Button>
@@ -526,7 +662,7 @@ export default function Automation() {
             </Card>
           </div>
         ) : (
-          filteredAutomations.map((automation) => {
+          displayedAutomations.map((automation) => {
             const TriggerIcon = getTriggerIcon(automation.trigger.type)
             
             return (
@@ -632,6 +768,67 @@ export default function Automation() {
           })
         )}
       </div>
+
+      {/* Test Automation Dialog (real environment) */}
+      <Dialog open={testDialogOpen} onOpenChange={setTestDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Testar Automação</DialogTitle>
+            <DialogDescription>
+              Selecione uma instância conectada e informe um número de WhatsApp para enviar uma mensagem de teste.
+            </DialogDescription>
+          </DialogHeader>
+
+          {connectedInstances.length === 0 ? (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Nenhuma instância do WhatsApp está conectada. Conecte uma instância para testar em ambiente real.
+              </p>
+              <Button variant="default" onClick={() => { setTestDialogOpen(false); navigate('/whatsapp-integration') }}>
+                Conectar Instância
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Instância</Label>
+                <Select value={selectedInstanceId ?? ''} onValueChange={(val) => setSelectedInstanceId(val)}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Selecione a instância" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {connectedInstances.map(inst => (
+                      <SelectItem key={inst.id} value={inst.id}>
+                        {inst.name} ({inst.phone_number || 'sem número'})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Número para teste (com DDI/DDD)</Label>
+                <Input value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder="Ex.: 5599999999999" />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Mensagem</Label>
+                <div className="p-3 rounded-md border text-sm text-muted-foreground">
+                  {(selectedAutomation?.actions.find(a => a.type === 'send_message')?.config?.message?.content) || `Teste da automação: ${selectedAutomation?.name || ''}`}
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setTestDialogOpen(false)} disabled={testing}>Cancelar</Button>
+                <Button onClick={handleRunTest} disabled={testing || !selectedInstanceId || !testPhone} className="gap-2">
+                  {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <TestTube className="h-4 w-4" />}
+                  Executar Teste
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Create Automation Dialog */}
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
