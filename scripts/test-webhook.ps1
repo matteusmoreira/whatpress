@@ -1,7 +1,7 @@
 # Testa o endpoint /api/webhook com um payload válido
 $ErrorActionPreference = 'Stop'
 
-$uri = 'https://whatpressaas.vercel.app/api/webhook'
+$uri = 'https://whatpresssaas.vercel.app/api/webhook'
 $bodyObj = @{ 
   event = 'test';
   instance = 'demo-instance';

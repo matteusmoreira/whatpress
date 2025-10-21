@@ -149,7 +149,8 @@ async function updateInstanceStatus(instanceName: string, status: string, qrCode
     status,
     last_activity: new Date().toISOString(),
   }
-  if (qrCode) updateData.qr_code = qrCode
+  // Allow explicit clearing of QR when qrCode is null, and update when provided
+  if (typeof qrCode !== 'undefined') updateData.qr_code = qrCode
 
   await supabase
     .from('whatsapp_instances')
@@ -160,19 +161,43 @@ async function updateInstanceStatus(instanceName: string, status: string, qrCode
 // Map Evolution API states to internal statuses
 function mapStateToStatus(state: string): 'connected' | 'connecting' | 'disconnected' | 'error' {
   const connected = new Set(['open', 'online', 'logged', 'authenticated', 'ready'])
-  const connecting = new Set(['connecting', 'qr', 'qrRead', 'qrIdle', 'loadingScreen', 'pairing', 'require_connection'])
-  const disconnected = new Set(['close', 'offline', 'timeout', 'unauthenticated', 'conflict'])
+  const connecting = new Set(['connecting', 'qr', 'qrcode', 'qrread', 'qridle', 'loadingscreen', 'pairing', 'require_connection', 'qr_updated'])
+  const disconnected = new Set(['close', 'closed', 'offline', 'timeout', 'unauthenticated', 'conflict', 'logout'])
 
-  if (connected.has(state)) return 'connected'
-  if (connecting.has(state)) return 'connecting'
-  if (disconnected.has(state)) return 'disconnected'
+  const s = (state || '').toString().toLowerCase().trim()
+  if (connected.has(s)) return 'connected'
+  if (connecting.has(s)) return 'connecting'
+  if (disconnected.has(s)) return 'disconnected'
   return 'error'
+}
+
+// Normalize different event name variants from Evolution API
+function normalizeEventName(input: any): 'messages.upsert' | 'connection.update' | 'qr.updated' | 'instance.status' | 'unknown' {
+  const raw = String(input || '').trim().toLowerCase()
+  if (!raw) return 'unknown'
+  // Replace separators and normalize qrcode -> qr
+  let e = raw.replace(/[-_]/g, '.').replace(/qrcode/g, 'qr')
+
+  // Common variants mapping
+  if (e === 'messages.upsert' || e === 'message.upsert' || e === 'messages.updates' || e === 'messages.insert') return 'messages.upsert'
+  if (e === 'connection.update' || e === 'connection.state' || e === 'connections.update') return 'connection.update'
+  if (e.startsWith('qr.')) return 'qr.updated'
+  if (e === 'instance.status' || e === 'instance.update' || e === 'instances.status') return 'instance.status'
+  return 'unknown'
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     if (req.method === 'GET') {
       return res.status(200).json({ ok: true, time: new Date().toISOString() })
+    }
+
+    if (req.method === 'OPTIONS') {
+      // CORS preflight (some providers may send it)
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Webhook-Secret, X-Hub-Signature-256')
+      return res.status(200).end()
     }
 
     if (req.method !== 'POST') {
@@ -185,37 +210,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(401).json({ error: 'Unauthorized' })
     }
 
-    const event = payload?.event
+    const rawEvent = payload?.event
     const instance = payload?.instance
 
-    if (!event || !instance) {
+    if (!rawEvent || !instance) {
       return res.status(400).json({ error: 'Invalid payload' })
     }
 
-    await saveEvent(event, instance, payload?.data ?? {})
+    // Always persist the original event name for observability
+    await saveEvent(String(rawEvent), instance, payload?.data ?? {})
+
+    const event = normalizeEventName(rawEvent)
 
     switch (event) {
       case 'messages.upsert':
         await saveMessage(payload.data, instance)
         break
       case 'connection.update': {
-        const state: string = payload.data?.connection?.state || 'connecting'
+        const state: string = payload.data?.connection?.state || payload.data?.state || 'connecting'
         const status = mapStateToStatus(state)
         await updateInstanceStatus(instance, status)
+        // Preferência do usuário: não limpar QR quando estado for "pairing" ou "require_connection"
+        // Mantemos o último QR salvo até que um novo evento 'qr.updated' seja recebido.
         break
       }
       case 'qr.updated': {
         const qr = payload.data?.qr
-        await updateInstanceStatus(instance, 'connecting', qr)
+        const qrDataUri = typeof qr === 'string' && !qr.startsWith('data:image') ? `data:image/png;base64,${qr}` : qr
+        await updateInstanceStatus(instance, 'connecting', qrDataUri)
         break
       }
       case 'instance.status': {
-        const state: string = payload.data?.status || 'connecting'
+        const state: string = payload.data?.status || payload.data?.state || 'connecting'
         const status = mapStateToStatus(state)
         await updateInstanceStatus(instance, status)
         break
       }
       default:
+        // Unknown event; we already saved it above for later troubleshooting
         break
     }
 

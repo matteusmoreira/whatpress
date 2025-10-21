@@ -338,6 +338,35 @@ export class EvolutionApiService {
       throw error;
     }
   }
+  // Configurar webhook para a instância atual
+  async setWebhookForInstance(
+    url: string,
+    options?: { webhook_by_events?: boolean; webhook_base64?: boolean; events?: string[]; enabled?: boolean }
+  ): Promise<any> {
+    const payload = {
+      url,
+      webhook_by_events: options?.webhook_by_events ?? false,
+      webhook_base64: options?.webhook_base64 ?? true,
+      events: options?.events ?? ['QRCODE_UPDATED','CONNECTION_UPDATE','MESSAGES_UPSERT','SEND_MESSAGE'],
+      enabled: options?.enabled ?? true,
+    }
+    try {
+      const response = await this.fetchWithFallback([
+        `/webhook/set/${this.getEncodedInstanceName()}`,
+        `/api/webhook/set/${this.getEncodedInstanceName()}`,
+        `/api/v1/webhook/set/${this.getEncodedInstanceName()}`,
+      ], {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(payload),
+      })
+
+      return await response.json()
+    } catch (error) {
+      console.error('Erro ao configurar webhook na Evolution API:', error)
+      throw error
+    }
+  }
 }
 
 export const evolutionApi = new EvolutionApiService({

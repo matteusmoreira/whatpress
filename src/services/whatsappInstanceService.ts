@@ -66,6 +66,20 @@ export class WhatsAppInstanceService {
       try {
         const creation = await evolutionService.createInstance()
         console.log('Instância criada na Evolution API:', instanceName)
+        // Configurar webhook para esta instância na Evolution API (idempotente)
+        if (instance.webhook_url) {
+          try {
+            await evolutionService.setWebhookForInstance(instance.webhook_url, {
+              webhook_by_events: false,
+              webhook_base64: true,
+              events: ['QRCODE_UPDATED','CONNECTION_UPDATE','MESSAGES_UPSERT','SEND_MESSAGE'],
+              enabled: true
+            })
+            console.log('Webhook configurado na Evolution API para', instanceName, '→', instance.webhook_url)
+          } catch (err) {
+            console.warn('Não foi possível configurar webhook na Evolution API agora:', (err as any)?.message || err)
+          }
+        }
         // Se a criação já retornou QR Code, salvar e ajustar status
         const qrBase64 = creation?.qrcode?.base64 || (typeof creation?.qrcode === 'string' ? creation.qrcode : undefined)
         if (qrBase64) {
@@ -131,8 +145,8 @@ export class WhatsAppInstanceService {
     }
   }
 
-  // Conectar instância (gerar QR Code)
-  async connectInstance(instanceId: string, tenantId?: string): Promise<{ qrCode?: string; status: WhatsAppInstance['status'] }> {
+  // Conectar instância (gerar QR Code ou Código de Pareamento)
+  async connectInstance(instanceId: string, tenantId?: string): Promise<{ qrCode?: string; pairingCode?: string; status: WhatsAppInstance['status'] }> {
     try {
       const { data: { user }, error: userError } = await supabase.auth.getUser()
       if (userError || !user) {
@@ -161,6 +175,21 @@ export class WhatsAppInstanceService {
         instanceName: instance.api_key || instance.name
       })
 
+      // Garantir webhook configurado antes de conectar (idempotente)
+      if (instance.webhook_url) {
+        try {
+          await evolutionService.setWebhookForInstance(instance.webhook_url, {
+            webhook_by_events: false,
+            webhook_base64: true,
+            events: ['QRCODE_UPDATED','CONNECTION_UPDATE','MESSAGES_UPSERT','SEND_MESSAGE'],
+            enabled: true
+          })
+          console.log('Webhook verificado/configurado antes de conectar:', instance.webhook_url)
+        } catch (err) {
+          console.warn('Falha ao configurar webhook antes de conectar (seguindo mesmo assim):', (err as any)?.message || err)
+        }
+      }
+
       try {
         const result = await evolutionService.connectInstance()
         
@@ -174,6 +203,15 @@ export class WhatsAppInstanceService {
           })
 
           return { qrCode: dataUri, status: 'connecting' }
+        }
+
+        // Suporte a Código de Pareamento
+        if (result?.pairingCode) {
+          await this.updateInstance(instanceId, {
+            status: 'connecting'
+          })
+
+          return { pairingCode: result.pairingCode, status: 'connecting' }
         }
 
         const status = this.mapEvolutionStatus(result?.state)
@@ -193,6 +231,10 @@ export class WhatsAppInstanceService {
               const dataUri = qrBase64.startsWith('data:image') ? qrBase64 : `data:image/png;base64,${qrBase64}`
               await this.updateInstance(instanceId, { status: 'connecting', qr_code: dataUri })
               return { qrCode: dataUri, status: 'connecting' }
+            }
+            if (retry?.pairingCode) {
+              await this.updateInstance(instanceId, { status: 'connecting' })
+              return { pairingCode: retry.pairingCode, status: 'connecting' }
             }
             const status = this.mapEvolutionStatus(retry?.state)
             await this.updateInstanceStatus(instanceId, status)

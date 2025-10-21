@@ -75,7 +75,11 @@ export default function WhatsAppConnections() {
   
   const { toast } = useToast()
 
-  const qrToDisplay = selectedInstance?.qr_code
+  // Sempre pegar a versão "ao vivo" da instância selecionada, acompanhando atualizações em tempo real vindas do Supabase/webhook
+  const selectedLive = selectedInstance ? (instances.find(i => i.id === selectedInstance.id) ?? selectedInstance) : null
+ 
+  const qrToDisplay = selectedLive?.qr_code
+  const hasQR = !!qrToDisplay
 
   // Filtrar instâncias baseado no termo de busca
   const filteredInstances = instances.filter(instance =>
@@ -106,11 +110,7 @@ export default function WhatsAppConnections() {
     try {
       setSelectedInstance(instance)
       const result = await connect(instance.id)
-      
-      // Se gerou QR Code, abrir dialog
-      if (result?.qrCode) {
-        setIsQRDialogOpen(true)
-      }
+      setIsQRDialogOpen(true)
     } catch (error) {
       // Erro já tratado no hook
     }
@@ -241,6 +241,8 @@ export default function WhatsAppConnections() {
       setIsSending(false)
     }
   }
+
+  // Função de cópia de código de pareamento removida por preferência de exibir apenas QR Code
 
   return (
     <div className="space-y-6">
@@ -451,6 +453,8 @@ export default function WhatsAppConnections() {
                       </div>
                     )}
 
+                    {/* Código de pareamento oculto conforme preferência do usuário */}
+
                     {/* Botões de ação */}
                     <div className="flex gap-2">
                       {instance.status === 'disconnected' && (
@@ -581,20 +585,20 @@ export default function WhatsAppConnections() {
         </TabsContent>
       </Tabs>
 
-      {/* Dialog do QR Code */}
+      {/* Dialog do QR Code / Código de Pareamento */}
       <Dialog open={isQRDialogOpen} onOpenChange={setIsQRDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Conectar WhatsApp</DialogTitle>
             <DialogDescription>
-              Escaneie o QR Code com o WhatsApp do seu celular
+              {hasQR ? 'Escaneie o QR Code com o WhatsApp do seu celular' : 'Aguardando QR Code...'}
             </DialogDescription>
           </DialogHeader>
           <div className="flex items-center justify-center p-6">
-            {qrToDisplay ? (
-              <div className="bg-white p-4 rounded-lg">
+            {hasQR ? (
+              <div className="bg-white p-4 rounded-lg flex items-center justify-center">
                 <img 
-                  src={qrToDisplay} 
+                  src={qrToDisplay as string} 
                   alt="QR Code WhatsApp" 
                   className="w-64 h-64"
                 />
@@ -603,7 +607,7 @@ export default function WhatsAppConnections() {
               <div className="w-64 h-64 bg-muted rounded-lg flex items-center justify-center">
                 <div className="text-center">
                   <QrCode className="w-12 h-12 mx-auto mb-2 text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">Gerando QR Code...</p>
+                  <p className="text-sm text-muted-foreground">Gerando código...</p>
                 </div>
               </div>
             )}
@@ -611,7 +615,7 @@ export default function WhatsAppConnections() {
           <DialogFooter className="sm:justify-start">
             <Button
               variant="outline"
-              onClick={() => selectedInstance && checkConnectionStatus(selectedInstance.id)}
+              onClick={() => selectedLive && checkConnectionStatus(selectedLive.id)}
               disabled={loading}
             >
               <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />

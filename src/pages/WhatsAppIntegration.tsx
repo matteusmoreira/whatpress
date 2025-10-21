@@ -56,9 +56,11 @@ import {
   Download,
   Upload,
   Link,
-  Unlink
+  Unlink,
+  QrCode
 } from 'lucide-react'
 import { useEvolutionApi } from '@/hooks/useEvolutionApi'
+import { useToast } from '@/hooks/use-toast'
 
 // Mock data para demonstração
 const mockInstances = [
@@ -133,7 +135,8 @@ export default function WhatsAppIntegration() {
   })
 
   // Integração real: usar hook que lê do Supabase/Evolution API
-  const { instances, loading, createInstance, connect, disconnect, checkConnectionStatus, deleteInstance } = useEvolutionApi()
+  const { instances, loading, createInstance, connect, disconnect, checkConnectionStatus, deleteInstance, pairingCodes } = useEvolutionApi()
+  const { toast } = useToast()
   const connectedCount = instances.filter(i => i.status === 'connected').length
 
   const getStatusColor = (status: string) => {
@@ -190,6 +193,14 @@ export default function WhatsAppIntegration() {
       events: [],
       secret: ''
     })
+  }
+
+  const handleCopyPairingCode = async (code?: string) => {
+    if (!code) return
+    try {
+      await navigator.clipboard.writeText(code)
+      toast({ title: 'Código copiado', description: 'Cole o código no WhatsApp para conectar.' })
+    } catch {}
   }
 
   return (
@@ -353,6 +364,62 @@ export default function WhatsAppIntegration() {
                           <Button variant="outline" size="sm" className="gap-2" onClick={() => connect(instance.id)}>
                             <RefreshCw className="h-4 w-4" />
                             Atualizar QR Code
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Código de pareamento quando não houver QR */}
+                  {instance.status === 'connecting' && !instance.qr_code && pairingCodes?.[instance.id] && (
+                    <div className="border rounded-lg p-4 bg-muted/50">
+                      <div className="flex items-center gap-4">
+                        <div className="w-32 h-32 bg-white rounded-lg flex items-center justify-center">
+                          <QrCode className="h-12 w-12 text-muted-foreground" />
+                        </div>
+                        <div className="flex-1">
+                          <h4 className="font-medium mb-2">Código de Pareamento</h4>
+                          <p className="text-sm text-muted-foreground mb-2">
+                            Digite este código no WhatsApp para conectar:
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <code className="text-2xl font-mono tracking-widest px-2 py-1 bg-white rounded">
+                              {pairingCodes[instance.id]}
+                            </code>
+                            <Button variant="secondary" size="sm" onClick={() => handleCopyPairingCode(pairingCodes[instance.id])}>
+                              <Copy className="h-4 w-4 mr-2" />
+                              Copiar
+                            </Button>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            No WhatsApp: Menu › Dispositivos conectados › Conectar dispositivo › Conectar com código
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 ml-auto">
+                          <Button variant="outline" size="sm" className="gap-2" onClick={() => connect(instance.id)}>
+                            <RefreshCw className="h-4 w-4" />
+                            Atualizar Código
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Aguardando QR/código */}
+                  {instance.status === 'connecting' && !instance.qr_code && !pairingCodes?.[instance.id] && (
+                    <div className="border rounded-lg p-4 bg-muted/50">
+                      <div className="flex items-center gap-4">
+                        <div className="w-32 h-32 bg-white rounded-lg flex items-center justify-center">
+                          <QrCode className="h-12 w-12 text-muted-foreground" />
+                        </div>
+                        <div className="flex-1">
+                          <h4 className="font-medium mb-2">Aguardando código de conexão</h4>
+                          <p className="text-sm text-muted-foreground mb-2">
+                            Estamos gerando um QR Code ou um código de pareamento. Isso pode levar alguns segundos.
+                          </p>
+                          <Button variant="outline" size="sm" className="gap-2" onClick={() => connect(instance.id)}>
+                            <RefreshCw className="h-4 w-4" />
+                            Tentar novamente
                           </Button>
                         </div>
                       </div>

@@ -15,6 +15,8 @@ export function useEvolutionApi() {
   const [messages, setMessages] = useState<any[]>([])
   const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
   const pollingIntervalRef = useRef<number | null>(null)
+  // Guarda códigos de pareamento por instância (não persistido no banco)
+  const [pairingCodes, setPairingCodes] = useState<Record<string, string | undefined>>({})
 
   const loadInstances = useCallback(async () => {
     setLoading(true)
@@ -47,14 +49,15 @@ export function useEvolutionApi() {
 
   const connect = useCallback(async (instanceId: string) => {
     try {
-      const { qrCode, status } = await whatsappInstanceService.connectInstance(instanceId, currentTenant?.id)
+      const { qrCode, pairingCode, status } = await whatsappInstanceService.connectInstance(instanceId, currentTenant?.id)
       setInstances(prev => prev.map(i => i.id === instanceId ? { ...i, status, qr_code: qrCode ?? i.qr_code } : i))
+      // Não exibir nem priorizar código de pareamento; aguardar QR via webhook/supabase
       if (qrCode) {
         toast({ title: 'QR Code disponível', description: 'Abra o QR Code para conectar seu WhatsApp.' })
       } else {
-        toast({ title: 'Conexão atualizada', description: `Status atual: ${status}` })
+        toast({ title: 'Aguardando QR Code...', description: `Status atual: ${status}` })
       }
-      return { qrCode, status }
+      return { qrCode, pairingCode, status }
     } catch (error: any) {
       toast({ title: 'Erro ao conectar instância', description: error?.message, variant: 'destructive' })
       throw error
@@ -65,6 +68,8 @@ export function useEvolutionApi() {
     try {
       await whatsappInstanceService.disconnectInstance(instanceId, currentTenant?.id)
       setInstances(prev => prev.map(i => i.id === instanceId ? { ...i, status: 'disconnected' } : i))
+      // Limpa código de pareamento local quando desconectar
+      setPairingCodes(prev => { const next = { ...prev }; delete next[instanceId]; return next })
       toast({ title: 'Instância desconectada' })
     } catch (error: any) {
       toast({ title: 'Erro ao desconectar', description: error?.message, variant: 'destructive' })
@@ -76,6 +81,8 @@ export function useEvolutionApi() {
       const status = await whatsappInstanceService.checkInstanceStatus(instanceId, currentTenant?.id)
       setInstances(prev => prev.map(i => i.id === instanceId ? { ...i, status } : i))
       if (status === 'connected') {
+        // Limpa código de pareamento quando conecta
+        setPairingCodes(prev => { const next = { ...prev }; delete next[instanceId]; return next })
         toast({ title: 'Instância conectada', description: 'Seu WhatsApp foi conectado com sucesso.' })
       }
       return status as WhatsAppInstance['status']
@@ -89,6 +96,8 @@ export function useEvolutionApi() {
     try {
       await whatsappInstanceService.deleteInstance(instanceId, currentTenant?.id)
       setInstances(prev => prev.filter(i => i.id !== instanceId))
+      // Limpa código de pareamento local quando deletar
+      setPairingCodes(prev => { const next = { ...prev }; delete next[instanceId]; return next })
       toast({ title: 'Instância excluída' })
     } catch (error: any) {
       toast({ title: 'Erro ao excluir instância', description: error?.message, variant: 'destructive' })
@@ -209,6 +218,13 @@ export function useEvolutionApi() {
               if (prev.find(i => i.id === newRow.id)) return prev
               return [newRow, ...prev]
             case 'UPDATE':
+              // Se status mudou para conectado/desconectado/erro, limpar código de pareamento local
+              if ((payload.new as any)?.status && (payload.new as any)?.status !== (payload.old as any)?.status) {
+                const newStatus = (payload.new as any)?.status
+                if (newStatus === 'connected' || newStatus === 'disconnected' || newStatus === 'error') {
+                  setPairingCodes(prev => { const next = { ...prev }; delete next[newRow.id]; return next })
+                }
+              }
               return prev.map(i => i.id === newRow.id ? { ...i, ...newRow } : i)
             case 'DELETE':
               return prev.filter(i => i.id !== oldRow.id)
@@ -286,6 +302,7 @@ export function useEvolutionApi() {
     loading,
     contacts,
     messages,
+    pairingCodes,
     loadInstances,
     createInstance,
     connect,
