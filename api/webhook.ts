@@ -29,6 +29,7 @@ function isAuthorized(req: VercelRequest, payload: any): boolean {
   // - HMAC via x-hub-signature-256
   // - Bearer token in Authorization header
   // - X-Webhook-Secret header matching the secret
+  // - Secret in body/query for providers que não suportam headers customizados
   if (!WEBHOOK_SECRET) return true
   const signature = req.headers['x-hub-signature-256'] as string | undefined
   const authHeader = (req.headers['authorization'] || '') as string
@@ -36,12 +37,16 @@ function isAuthorized(req: VercelRequest, payload: any): boolean {
     ? authHeader.slice('Bearer '.length)
     : ''
   const xSecret = (req.headers['x-webhook-secret'] || '') as string
+  const bodySecret = (payload?.secret || payload?.webhook_secret || payload?.token || '') as string
+  const querySecret = (req.query?.secret || (req.query as any)?.webhook_secret || '') as string
 
   const hmacOk = validateHmac(payload, signature)
   const bearerOk = !!bearer && bearer === WEBHOOK_SECRET
   const headerOk = !!xSecret && xSecret === WEBHOOK_SECRET
+  const bodyOk = !!bodySecret && bodySecret === WEBHOOK_SECRET
+  const queryOk = !!querySecret && String(querySecret) === WEBHOOK_SECRET
 
-  return hmacOk || bearerOk || headerOk
+  return hmacOk || bearerOk || headerOk || bodyOk || queryOk
 }
 
 async function saveEvent(event: string, instance: string, data: any) {

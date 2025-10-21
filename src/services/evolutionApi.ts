@@ -351,6 +351,7 @@ export class EvolutionApiService {
       enabled: options?.enabled ?? true,
     }
     try {
+      // Primeiro tenta variantes com instanceName no path
       const response = await this.fetchWithFallback([
         `/webhook/set/${this.getEncodedInstanceName()}`,
         `/api/webhook/set/${this.getEncodedInstanceName()}`,
@@ -363,8 +364,22 @@ export class EvolutionApiService {
 
       return await response.json()
     } catch (error) {
-      console.error('Erro ao configurar webhook na Evolution API:', error)
-      throw error
+      console.warn('Fallback webhook:set sem instanceName no path, tentando enviar no body…', error)
+      // Algumas versões da Evolution esperam instanceName no body e não no path
+      const bodyPayload = {
+        instanceName: this.config.instanceName,
+        ...payload,
+      }
+      const response2 = await this.fetchWithFallback([
+        `/webhook/set`,
+        `/api/webhook/set`,
+        `/api/v1/webhook/set`,
+      ], {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(bodyPayload),
+      })
+      return await response2.json()
     }
   }
 }

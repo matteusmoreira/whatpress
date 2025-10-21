@@ -233,10 +233,22 @@ app.post('/webhook', async (req, res) => {
     const signature = req.headers['x-hub-signature-256']
     const payload = req.body
 
-    // Validar webhook (opcional)
-    if (!validateWebhook(payload, signature)) {
-      console.log('❌ Webhook signature validation failed')
-      return res.status(401).json({ error: 'Invalid signature' })
+    // Autorização flexível: HMAC, Authorization Bearer, X-Webhook-Secret, segredo no body
+    const authHeader = req.headers['authorization'] || ''
+    const bearer = typeof authHeader === 'string' && authHeader.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : ''
+    const xSecret = (req.headers['x-webhook-secret'] || '')
+    const bodySecret = (payload?.secret || payload?.webhook_secret || '')
+
+    const authorized =
+      !WEBHOOK_SECRET ||
+      validateWebhook(payload, signature) ||
+      (typeof xSecret === 'string' && xSecret === WEBHOOK_SECRET) ||
+      (typeof bearer === 'string' && bearer === WEBHOOK_SECRET) ||
+      (typeof bodySecret === 'string' && bodySecret === WEBHOOK_SECRET)
+
+    if (!authorized) {
+      console.log('❌ Webhook authorization failed')
+      return res.status(401).json({ error: 'Unauthorized' })
     }
 
     console.log('📨 Webhook recebido:', {
