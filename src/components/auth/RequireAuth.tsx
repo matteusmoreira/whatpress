@@ -1,7 +1,7 @@
 import { ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
-import { useRoles } from '@/hooks/useRoles'
+import { useRoleContext } from '@/contexts/RoleContext'
 
 interface RequireAuthProps {
   children: ReactNode
@@ -9,7 +9,7 @@ interface RequireAuthProps {
 
 export default function RequireAuth({ children }: RequireAuthProps) {
   const { isAuthenticated, loading } = useAuth()
-  const { loading: rolesLoading } = useRoles()
+  const { isLoading: rolesLoading } = useRoleContext()
   const location = useLocation()
 
   // Mostrar loading enquanto verifica a autenticação e roles

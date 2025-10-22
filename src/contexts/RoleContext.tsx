@@ -37,13 +37,14 @@ export interface RoleContextType {
   // Verificações de permissão
   hasPermission: (resource: string, action: string) => boolean;
   canAccess: (resource: string, action?: string) => boolean;
+  checkPermission: (resource: string, action: string, tenantId?: string) => Promise<boolean>;
   
   // Ações
   refreshRoles: () => Promise<void>;
   switchTenant: (tenantId: string) => Promise<void>;
   
   // Log de ações
-  logAction: (action: string, resource: string, resourceId?: string, details?: any) => Promise<void>;
+  logAction: (action: string, resource?: string, details?: any) => Promise<void>;
 }
 
 const RoleContext = createContext<RoleContextType | undefined>(undefined);
@@ -242,6 +243,56 @@ export function RoleProvider({ children }: RoleProviderProps) {
     );
   };
 
+  // Verificar permissão específica (via RPC)
+  const checkPermission = async (
+    resource: string,
+    action: string,
+    targetTenantId?: string
+  ): Promise<boolean> => {
+    if (!user?.id) return false;
+
+    const checkTenantId = targetTenantId || currentTenant?.id;
+    if (!checkTenantId) return false;
+
+    try {
+      const { data, error } = await supabase.rpc('has_permission', {
+        user_id: user.id,
+        tenant_id: checkTenantId,
+        resource,
+        action,
+      });
+
+      if (error) throw error;
+      return Boolean(data);
+    } catch (err) {
+      console.error('Erro ao verificar permissão:', err);
+      return false;
+    }
+  };
+
+  // Registrar ação do usuário
+  const logAction = async (
+    action: string,
+    resource?: string,
+    details: Record<string, any> = {}
+  ) => {
+    // Só precisamos do user.id. Permitir tenantId nulo quando não houver tenant atual.
+    if (!user?.id) return;
+
+    const tenantId = currentTenant?.id ?? null;
+    try {
+      await supabase.rpc('log_user_action', {
+        p_user_id: user.id,
+        p_tenant_id: tenantId,
+        p_action: action,
+        p_resource: resource ?? null,
+        p_details: details ?? {},
+      });
+    } catch (err) {
+      console.error('Falha ao registrar ação do usuário', err);
+    }
+  };
+
   // Atualizar roles
   const refreshRoles = async () => {
     await loadUserRoles();
@@ -276,29 +327,6 @@ export function RoleProvider({ children }: RoleProviderProps) {
     }
   };
 
-  // Registrar ação do usuário
-  const logAction = async (
-    action: string, 
-    resource: string, 
-    resourceId?: string, 
-    details?: any
-  ) => {
-    if (!user?.id || !currentTenant?.id) return;
-
-    try {
-      await supabase.rpc('log_user_action', {
-        p_user_id: user.id,
-        p_tenant_id: currentTenant.id,
-        p_action: action,
-        p_resource: resource,
-        p_resource_id: resourceId || null,
-        p_details: details || {}
-      });
-    } catch (error) {
-      console.error('Erro ao registrar ação:', error);
-    }
-  };
-
   // Carregar dados quando user ou tenant mudar
   useEffect(() => {
     loadUserRoles();
@@ -314,6 +342,7 @@ export function RoleProvider({ children }: RoleProviderProps) {
     isUser,
     hasPermission,
     canAccess,
+    checkPermission,
     refreshRoles,
     switchTenant,
     logAction

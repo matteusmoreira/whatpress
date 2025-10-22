@@ -13,6 +13,9 @@ import {
 import { useTheme } from '@/components/theme-provider'
 import { useAuth } from '@/hooks/useAuth'
 import { useNavigate } from 'react-router-dom'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useTenant } from '@/hooks/useTenant'
+import { useRoleContext } from '@/contexts/RoleContext'
 
 interface HeaderProps {
   onMenuClick?: () => void
@@ -23,6 +26,8 @@ export function Header({ onMenuClick }: HeaderProps) {
   const [showUserMenu, setShowUserMenu] = useState(false)
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const { currentTenant, tenants, switchTenant, loading: tenantLoading } = useTenant()
+  const { currentRole, logAction } = useRoleContext()
 
   return (
     <header className="h-16 border-b border-border/40 backdrop-blur-sm bg-background/80 sticky top-0 z-50">
@@ -46,6 +51,38 @@ export function Header({ onMenuClick }: HeaderProps) {
               className="pl-10 pr-4 py-2 w-80 bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
             />
           </div>
+
+          {/* Global Tenant Selector (non-superadmin support) */}
+          {!tenantLoading && tenants.length > 0 && (
+            <div className="hidden md:flex md:items-center md:space-x-2">
+              <Select 
+                value={currentTenant?.id} 
+                onValueChange={async (value) => {
+                  const prev = currentTenant?.id
+                  await switchTenant(value)
+                  try {
+                    await logAction('tenant_switch', 'tenant', value, { previous_tenant_id: prev, new_tenant_id: value })
+                  } catch (e) {
+                    console.error('Falha ao registrar troca de tenant:', e)
+                  }
+                }}
+              >
+                <SelectTrigger className="w-[220px] bg-muted/50 border border-border rounded-lg">
+                  <SelectValue placeholder="Selecionar tenant" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tenants.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {currentRole && currentRole !== 'NONE' && (
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary">
+                  {currentRole}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Right Section */}
@@ -100,13 +137,45 @@ export function Header({ onMenuClick }: HeaderProps) {
                 <div className="p-3 border-b border-border">
                   <p className="font-medium">{user?.name || 'Usuário'}</p>
                   <p className="text-sm text-muted-foreground">{user?.email || 'usuario@email.com'}</p>
-                  <div className="mt-2">
+                  <div className="mt-2 flex items-center gap-2">
                     {user?.plan && (
                       <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary">
                         Plano {user.plan}
                       </span>
                     )}
+                    {currentRole && currentRole !== 'NONE' && (
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground">
+                        {currentRole}
+                      </span>
+                    )}
                   </div>
+                  {/* Mobile Tenant Selector */}
+                  {!tenantLoading && tenants.length > 0 && (
+                    <div className="md:hidden mt-3">
+                      <span className="text-xs text-muted-foreground">Tenant</span>
+                      <Select 
+                        value={currentTenant?.id} 
+                        onValueChange={async (value) => {
+                          const prev = currentTenant?.id
+                          await switchTenant(value)
+                          try {
+                            await logAction('tenant_switch', 'tenant', value, { previous_tenant_id: prev, new_tenant_id: value })
+                          } catch (e) {
+                            console.error('Falha ao registrar troca de tenant:', e)
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="w-full bg-muted/50 border border-border rounded-lg mt-1">
+                          <SelectValue placeholder="Selecionar tenant" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {tenants.map((t) => (
+                            <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                 </div>
                 <div className="p-2">
                   <Button variant="ghost" size="sm" className="w-full justify-start">

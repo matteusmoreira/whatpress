@@ -19,6 +19,7 @@ import {
   Bell,
   TrendingUp
 } from 'lucide-react'
+import { useRoles } from '@/hooks/useRoles'
 
 interface SidebarProps {
   className?: string
@@ -27,6 +28,9 @@ interface SidebarProps {
 export function Sidebar({ className }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false)
   const location = useLocation()
+  const { currentRole } = useRoles()
+  const isSuperAdmin = currentRole?.role_type === 'SUPERADMIN'
+  const isAdmin = isSuperAdmin || currentRole?.role_type === 'ADMIN'
 
   const navigation = [
     { 
@@ -123,7 +127,21 @@ export function Sidebar({ className }: SidebarProps) {
       current: location.pathname.startsWith('/dashboard/support')
     }
   ]
+ 
+  const navigationFiltered = navigation.filter((item) => {
+    if (item.href === '/dashboard/quotas' || item.href === '/dashboard/roles') {
+      return !!isAdmin
+    }
+    return true
+  })
 
+  const bottomNavigationFiltered = bottomNavigation.filter((item) => {
+    if (item.href === '/superadmin') {
+      return !!isSuperAdmin
+    }
+    return true
+  })
+ 
   return (
     <div className={cn(
       'flex flex-col h-full bg-card border-r border-border/40 transition-all duration-300',
@@ -151,10 +169,10 @@ export function Sidebar({ className }: SidebarProps) {
           )}
         </Button>
       </div>
-
+ 
       {/* Navigation */}
       <nav className="flex-1 p-4 space-y-2">
-        {navigation.map((item) => (
+        {navigationFiltered.map((item) => (
           <Link
             key={item.name}
             to={item.href}
@@ -171,10 +189,10 @@ export function Sidebar({ className }: SidebarProps) {
           </Link>
         ))}
       </nav>
-
+ 
       {/* Bottom Navigation */}
       <div className="p-4 space-y-2 border-t border-border/40">
-        {bottomNavigation.map((item) => (
+        {bottomNavigationFiltered.map((item) => (
           <Link
             key={item.name}
             to={item.href}

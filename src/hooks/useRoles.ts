@@ -207,20 +207,19 @@ export const useRoles = (): UseRolesReturn => {
   // Registrar ação do usuário
   const logAction = async (
     action: string,
-    resource: string,
-    resourceId?: string,
+    resource?: string,
     details?: any
   ): Promise<void> => {
-    if (!user?.id || !currentTenant?.id) return;
+    if (!user?.id) return;
 
+    const tenantId = currentTenant?.id ?? null;
     try {
       await supabase.rpc('log_user_action', {
         p_user_id: user.id,
-        p_tenant_id: currentTenant.id,
+        p_tenant_id: tenantId,
         p_action: action,
-        p_resource: resource,
-        p_resource_id: resourceId || null,
-        p_details: details || {}
+        p_resource: resource ?? null,
+        p_details: details ?? {}
       });
     } catch (err) {
       console.error('Erro ao registrar ação:', err);

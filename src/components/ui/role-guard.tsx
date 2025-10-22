@@ -1,9 +1,9 @@
 import React, { ReactNode, useEffect, useState } from 'react';
-import { useRoles } from '@/hooks/useRoles';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
-import { Shield, AlertTriangle, Lock } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useRoleContext } from '@/contexts/RoleContext';
+ import { Alert, AlertDescription } from '@/components/ui/alert';
+ import { Button } from '@/components/ui/button';
+ import { Shield, AlertTriangle, Lock } from 'lucide-react';
+ import { useNavigate } from 'react-router-dom';
 
 interface RoleGuardProps {
   children: ReactNode;
@@ -31,81 +31,81 @@ export const RoleGuard: React.FC<RoleGuardProps> = ({
     currentRole, 
     isSuperAdmin, 
     isAdmin, 
-    isUser, 
-    loading, 
+    isLoading, 
     checkPermission 
-  } = useRoles(tenantId);
-  
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
-  const [permissionLoading, setPermissionLoading] = useState(false);
-  const navigate = useNavigate();
+  } = useRoleContext();
+  const isUser = currentRole === 'USER';
+   
+   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+   const [permissionLoading, setPermissionLoading] = useState(false);
+   const navigate = useNavigate();
 
-  // Verificar permissão específica se fornecida
-  useEffect(() => {
-    const verifyPermission = async () => {
-      if (!requiredPermission) {
-        setHasPermission(true);
-        return;
-      }
+   // Verificar permissão específica se fornecida
+   useEffect(() => {
+     const verifyPermission = async () => {
+       if (!requiredPermission) {
+         setHasPermission(true);
+         return;
+       }
 
-      setPermissionLoading(true);
-      try {
-        const result = await checkPermission(
-          requiredPermission.resource,
-          requiredPermission.action,
-          tenantId
-        );
-        setHasPermission(result);
-      } catch (error) {
-        console.error('Erro ao verificar permissão:', error);
-        setHasPermission(false);
-      } finally {
-        setPermissionLoading(false);
-      }
-    };
+       setPermissionLoading(true);
+       try {
+         const result = await checkPermission(
+           requiredPermission.resource,
+           requiredPermission.action,
+           tenantId
+         );
+         setHasPermission(result);
+       } catch (error) {
+         console.error('Erro ao verificar permissão:', error);
+         setHasPermission(false);
+       } finally {
+         setPermissionLoading(false);
+       }
+     };
 
-    if (!loading) {
-      verifyPermission();
-    }
-  }, [requiredPermission, tenantId, loading, checkPermission]);
+    if (!isLoading) {
+       verifyPermission();
+     }
+  }, [requiredPermission, tenantId, isLoading, checkPermission]);
 
-  // Verificar role se fornecida
-  const hasRequiredRole = (): boolean => {
-    if (!requiredRole) return true;
+   // Verificar role se fornecida
+   const hasRequiredRole = (): boolean => {
+     if (!requiredRole) return true;
 
-    switch (requiredRole) {
-      case 'SUPERADMIN':
-        return isSuperAdmin;
-      case 'ADMIN':
-        return isSuperAdmin || isAdmin;
-      case 'USER':
-        return isSuperAdmin || isAdmin || isUser;
-      default:
-        return false;
-    }
-  };
+     switch (requiredRole) {
+       case 'SUPERADMIN':
+         return isSuperAdmin;
+       case 'ADMIN':
+         return isSuperAdmin || isAdmin;
+       case 'USER':
+         return isSuperAdmin || isAdmin || isUser;
+       default:
+         return false;
+     }
+   };
 
-  // Loading state
-  if (loading || permissionLoading) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <div className="flex items-center space-x-2">
-          <Shield className="h-5 w-5 animate-spin" />
-          <span className="text-muted-foreground">Verificando permissões...</span>
-        </div>
-      </div>
-    );
-  }
+   // Loading state
+  if (isLoading || permissionLoading) {
+     return (
+       <div className="flex items-center justify-center p-8">
+         <div className="flex items-center space-x-2">
+           <Shield className="h-5 w-5 animate-spin" />
+           <span className="text-muted-foreground">Verificando permissões...</span>
+         </div>
+       </div>
+     );
+   }
 
-  // Verificar se tem acesso
-  const hasRoleAccess = hasRequiredRole();
-  const hasPermissionAccess = hasPermission !== false;
-  const hasAccess = hasRoleAccess && hasPermissionAccess;
+   // Verificar se tem acesso
+   const hasRoleAccess = hasRequiredRole();
+   const hasPermissionAccess = hasPermission !== false;
+   const hasAccess = hasRoleAccess && hasPermissionAccess;
 
-  // Se tem acesso, renderizar children
-  if (hasAccess) {
-    return <>{children}</>;
-  }
+   // Se tem acesso, renderizar children
+   if (hasAccess) {
+     return <>{children}</>; 
+   }
 
   // Se tem fallback customizado, usar ele
   if (fallback) {
@@ -257,59 +257,59 @@ export const useRoleGuard = (
     currentRole, 
     isSuperAdmin, 
     isAdmin, 
-    isUser, 
-    loading, 
+    isLoading, 
     checkPermission 
-  } = useRoles(tenantId);
-  
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  } = useRoleContext();
+  const isUser = currentRole === 'USER';
+   
+   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
 
-  useEffect(() => {
-    const verifyAccess = async () => {
-      // Verificar role
-      let hasRoleAccess = true;
-      if (requiredRole) {
-        switch (requiredRole) {
-          case 'SUPERADMIN':
-            hasRoleAccess = isSuperAdmin;
-            break;
-          case 'ADMIN':
-            hasRoleAccess = isSuperAdmin || isAdmin;
-            break;
-          case 'USER':
-            hasRoleAccess = isSuperAdmin || isAdmin || isUser;
-            break;
-        }
-      }
+   useEffect(() => {
+     const verifyAccess = async () => {
+       // Verificar role
+       let hasRoleAccess = true;
+       if (requiredRole) {
+         switch (requiredRole) {
+           case 'SUPERADMIN':
+             hasRoleAccess = isSuperAdmin;
+             break;
+           case 'ADMIN':
+             hasRoleAccess = isSuperAdmin || isAdmin;
+             break;
+           case 'USER':
+             hasRoleAccess = isSuperAdmin || isAdmin || isUser;
+             break;
+         }
+       }
 
-      // Verificar permissão
-      let hasPermissionAccess = true;
-      if (requiredPermission && hasRoleAccess) {
-        try {
-          hasPermissionAccess = await checkPermission(
-            requiredPermission.resource,
-            requiredPermission.action,
-            tenantId
-          );
-        } catch (error) {
-          hasPermissionAccess = false;
-        }
-      }
+       // Verificar permissão
+       let hasPermissionAccess = true;
+       if (requiredPermission && hasRoleAccess) {
+         try {
+           hasPermissionAccess = await checkPermission(
+             requiredPermission.resource,
+             requiredPermission.action,
+             tenantId
+           );
+         } catch (error) {
+           hasPermissionAccess = false;
+         }
+       }
 
-      setHasPermission(hasRoleAccess && hasPermissionAccess);
-    };
+       setHasPermission(hasRoleAccess && hasPermissionAccess);
+     };
 
-    if (!loading) {
-      verifyAccess();
-    }
-  }, [requiredRole, requiredPermission, tenantId, loading, isSuperAdmin, isAdmin, isUser, checkPermission]);
+    if (!isLoading) {
+       verifyAccess();
+     }
+  }, [requiredRole, requiredPermission, tenantId, isLoading, isSuperAdmin, isAdmin, isUser, checkPermission]);
 
-  return {
-    hasAccess: hasPermission,
-    loading: loading || hasPermission === null,
-    currentRole,
-    isSuperAdmin,
-    isAdmin,
-    isUser
-  };
-};
+   return {
+     hasAccess: hasPermission,
+    loading: isLoading || hasPermission === null,
+     currentRole,
+     isSuperAdmin,
+     isAdmin,
+     isUser
+   };
+ };

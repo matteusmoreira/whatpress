@@ -30,7 +30,8 @@ import { useQuotas } from '@/hooks/useQuotas'
 import { CampaignProgress } from '@/components/CampaignProgress'
 import { InstanceHealthMonitor } from '@/components/InstanceHealthMonitor'
 import { QuotaProgressGrid, QuotaProgressCompact } from '@/components/ui/quota-progress'
-import { useRoles } from '@/hooks/useRoles'
+import { useRoleContext } from '@/contexts/RoleContext'
+// import { useTenant } from '@/hooks/useTenant' // Removido: troca de tenant agora é global via Header
 import { RoleGuard } from '@/components/ui/role-guard'
 import { Shield, User, Crown, Settings } from 'lucide-react'
 import { MultiSessionManager } from '@/components/MultiSessionManager'
@@ -71,10 +72,11 @@ export default function Dashboard() {
     isSuperAdmin, 
     isAdmin, 
     isUser, 
-    loading: rolesLoading, 
+    isLoading,
     userTenants,
-    checkPermission 
-  } = useRoles()
+    checkPermission
+  } = useRoleContext()
+  // Seletor de tenant é global via Header; switchTenant removido do Dashboard
   
   const [metrics, setMetrics] = useState<DashboardMetrics>({
     total_campaigns: 0,
@@ -91,6 +93,7 @@ export default function Dashboard() {
   
   const [realtimeActivity, setRealtimeActivity] = useState<RealtimeActivity[]>([])
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null)
+  // Removido: estado local do seletor de tenant (seletor agora é global no Header)
 
   // Simular métricas do dashboard
   const generateMetrics = (): DashboardMetrics => {
@@ -235,7 +238,7 @@ export default function Dashboard() {
                 <div>
                   <p className="font-medium">Role Atual</p>
                   <p className="text-sm text-muted-foreground">
-                    {rolesLoading ? 'Carregando...' : currentRole || 'Não definido'}
+                    {isLoading ? 'Carregando...' : currentRole || 'Não definido'}
                   </p>
                 </div>
               </div>
@@ -245,6 +248,8 @@ export default function Dashboard() {
                 {isUser && <Badge variant="secondary">USER</Badge>}
               </div>
             </div>
+
+            {/* Seletor de Tenant movido para o Header para evitar duplicidade */}
 
             {/* Testes de permissões por role */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -296,14 +301,14 @@ export default function Dashboard() {
                   {userTenants.map((role, index) => (
                     <div key={index} className="flex items-center justify-between p-2 border rounded">
                       <div>
-                        <p className="font-medium">{role.tenantName}</p>
-                        <p className="text-sm text-muted-foreground">Plano: {role.tenantPlan}</p>
+                        <p className="font-medium">{role.tenant_name}</p>
+                        <p className="text-sm text-muted-foreground">Plano: {role.tenant_plan}</p>
                       </div>
                       <Badge variant={
-                        role.userRole === 'SUPERADMIN' ? 'destructive' :
-                        role.userRole === 'ADMIN' ? 'default' : 'secondary'
+                        role.user_role === 'SUPERADMIN' ? 'destructive' :
+                        role.user_role === 'ADMIN' ? 'default' : 'secondary'
                       }>
-                        {role.userRole}
+                        {role.user_role}
                       </Badge>
                     </div>
                   ))}

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useRoles } from '@/hooks/useRoles';
+
 import { useTenant } from '@/hooks/useTenant';
 import { RoleGuard, AdminOnly } from '@/components/RoleGuard';
+import { PermissionGuard } from '@/components/PermissionGuard';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,7 +33,7 @@ interface TenantUser {
   id: string;
   email: string;
   full_name: string | null;
-  user_role: 'SUPERADMIN' | 'ADMIN' | 'USER';
+  role: 'SUPERADMIN' | 'ADMIN' | 'USER';
   created_at: string;
   last_sign_in_at: string | null;
 }
@@ -58,7 +59,6 @@ interface UserAction {
 
 export const RoleManagement: React.FC = () => {
   const { currentTenant } = useTenant();
-  const { isSuperAdmin, isAdmin, logAction } = useRoles();
   
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -70,6 +70,25 @@ export const RoleManagement: React.FC = () => {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'ADMIN' | 'USER'>('USER');
 
+  // Filtros da aba Auditoria
+  const [auditLimit, setAuditLimit] = useState<number>(50);
+  const [auditSinceMinutes, setAuditSinceMinutes] = useState<number>(0);
+  const [auditActionFilter, setAuditActionFilter] = useState<string>('');
+  const [auditResourceFilter, setAuditResourceFilter] = useState<string>('');
+
+  // Base para chamadas da API de roles (permite usar backend local em dev)
+  const API_BASE = (import.meta as any).env?.VITE_ROLES_BASE || '';
+
+  // Helper: obter token de acesso atual para chamadas ao backend
+  const getAccessToken = async (): Promise<string | null> => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      return session?.access_token ?? null
+    } catch {
+      return null
+    }
+  }
+  
   // Carregar dados
   useEffect(() => {
     if (currentTenant?.id) {
@@ -99,31 +118,31 @@ export const RoleManagement: React.FC = () => {
     if (!currentTenant?.id) return;
 
     try {
-      const { data, error } = await supabase
-        .from('tenant_users')
-        .select(`
-          user_id,
-          user_role,
-          created_at,
-          profiles!inner(
-            id,
-            email,
-            full_name,
-            last_sign_in_at
-          )
-        `)
-        .eq('tenant_id', currentTenant.id);
+      const token = await getAccessToken();
+      if (!token) throw new Error('Sessão não encontrada');
 
-      if (error) throw error;
+      const res = await fetch('/api/roles', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          action: 'list_users',
+          tenantId: currentTenant.id
+        })
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result?.error || 'Falha ao carregar usuários');
 
-      const formattedUsers: TenantUser[] = data?.map(item => ({
-        id: item.user_id,
-        email: item.profiles.email,
-        full_name: item.profiles.full_name,
-        user_role: item.user_role,
-        created_at: item.created_at,
-        last_sign_in_at: item.profiles.last_sign_in_at
-      })) || [];
+      const formattedUsers: TenantUser[] = (result?.users ?? []).map((row: any) => ({
+        id: row.user_id,
+        email: row.email ?? '',
+        full_name: row.full_name ?? null,
+        role: row.role,
+        created_at: row.created_at,
+        last_sign_in_at: row.last_sign_in_at ?? null
+      }));
 
       setUsers(formattedUsers);
     } catch (error) {
@@ -133,15 +152,23 @@ export const RoleManagement: React.FC = () => {
 
   const loadPermissions = async () => {
     try {
-      const { data, error } = await supabase
-        .from('role_permissions')
-        .select('*')
-        .order('role', { ascending: true })
-        .order('resource', { ascending: true })
-        .order('action', { ascending: true });
+      const token = await getAccessToken();
+      if (!token) throw new Error('Sessão não encontrada');
 
-      if (error) throw error;
-      setPermissions(data || []);
+      const res = await fetch('/api/roles', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          action: 'list_permissions'
+        })
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result?.error || 'Falha ao carregar permissões');
+
+      setPermissions(result?.permissions ?? []);
     } catch (error) {
       console.error('Erro ao carregar permissões:', error);
     }
@@ -151,30 +178,45 @@ export const RoleManagement: React.FC = () => {
     if (!currentTenant?.id) return;
 
     try {
-      const { data, error } = await supabase
-        .from('user_actions_log')
-        .select(`
-          *,
-          profiles!inner(email)
-        `)
-        .eq('tenant_id', currentTenant.id)
-        .order('created_at', { ascending: false })
-        .limit(50);
+      const token = await getAccessToken();
+      if (!token) throw new Error('Sessão não encontrada');
 
-      if (error) throw error;
+      // Montar payload com filtros
+      const since = auditSinceMinutes > 0
+        ? new Date(Date.now() - auditSinceMinutes * 60 * 1000).toISOString()
+        : undefined;
+      const payload: any = {
+        action: 'list_user_actions',
+        tenantId: currentTenant.id,
+        limit: Math.max(1, Math.min(200, Number(auditLimit) || 50)),
+      };
+      if (auditActionFilter) payload.actionFilter = auditActionFilter;
+      if (auditResourceFilter) payload.resource = auditResourceFilter;
+      if (since) payload.since = since;
 
-      const formattedActions: UserAction[] = data?.map(item => ({
+      const res = await fetch('/api/roles', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result?.error || 'Falha ao carregar ações');
+
+      const actions: UserAction[] = (result?.actions ?? []).map((item: any) => ({
         id: item.id,
         user_id: item.user_id,
-        user_email: item.profiles.email,
+        user_email: item.user_email ?? '',
         action: item.action,
         resource: item.resource,
         resource_id: item.resource_id,
         details: item.details,
-        created_at: item.created_at
-      })) || [];
+        created_at: item.created_at,
+      }));
 
-      setUserActions(formattedActions);
+      setUserActions(actions);
     } catch (error) {
       console.error('Erro ao carregar ações:', error);
     }
@@ -184,18 +226,26 @@ export const RoleManagement: React.FC = () => {
     if (!currentTenant?.id) return;
 
     try {
-      const { error } = await supabase
-        .from('tenant_users')
-        .update({ user_role: newRole })
-        .eq('tenant_id', currentTenant.id)
-        .eq('user_id', userId);
+      const token = await getAccessToken();
+      if (!token) throw new Error('Sessão não encontrada');
 
-      if (error) throw error;
-
-      await logAction('update_user_role', 'users', userId, { 
-        new_role: newRole,
-        tenant_id: currentTenant.id 
+      const res = await fetch('/api/roles', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          action: 'update_role',
+          tenantId: currentTenant.id,
+          userId,
+          newRole
+        })
       });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result?.error || 'Falha ao atualizar role');
+
+      // Logging realizado no backend (/api/roles: update_role)
 
       toast.success('Role do usuário atualizada com sucesso');
       loadUsers();
@@ -209,17 +259,25 @@ export const RoleManagement: React.FC = () => {
     if (!currentTenant?.id) return;
 
     try {
-      const { error } = await supabase
-        .from('tenant_users')
-        .delete()
-        .eq('tenant_id', currentTenant.id)
-        .eq('user_id', userId);
+      const token = await getAccessToken();
+      if (!token) throw new Error('Sessão não encontrada');
 
-      if (error) throw error;
-
-      await logAction('remove_user', 'users', userId, { 
-        tenant_id: currentTenant.id 
+      const res = await fetch('/api/roles', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          action: 'remove',
+          tenantId: currentTenant.id,
+          userId
+        })
       });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result?.error || 'Falha ao remover usuário');
+
+      // Logging realizado no backend (/api/roles: remove)
 
       toast.success('Usuário removido com sucesso');
       loadUsers();
@@ -233,35 +291,26 @@ export const RoleManagement: React.FC = () => {
     if (!currentTenant?.id || !inviteEmail) return;
 
     try {
-      // Verificar se o usuário já existe
-      const { data: existingUser } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('email', inviteEmail)
-        .single();
+      const token = await getAccessToken();
+      if (!token) throw new Error('Sessão não encontrada');
 
-      if (existingUser) {
-        // Adicionar ao tenant
-        const { error } = await supabase
-          .from('tenant_users')
-          .insert({
-            tenant_id: currentTenant.id,
-            user_id: existingUser.id,
-            user_role: inviteRole
-          });
-
-        if (error) throw error;
-      } else {
-        // Criar convite (implementar sistema de convites)
-        toast.info('Sistema de convites será implementado em breve');
-        return;
-      }
-
-      await logAction('invite_user', 'users', existingUser.id, { 
-        email: inviteEmail,
-        role: inviteRole,
-        tenant_id: currentTenant.id 
+      const res = await fetch('/api/roles', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          action: 'invite',
+          tenantId: currentTenant.id,
+          email: inviteEmail,
+          role: inviteRole
+        })
       });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result?.error || 'Falha ao convidar usuário');
+
+      // Logging realizado no backend (/api/roles: invite)
 
       toast.success('Usuário adicionado com sucesso');
       setIsInviteDialogOpen(false);
@@ -276,17 +325,25 @@ export const RoleManagement: React.FC = () => {
 
   const handleUpdatePermission = async (permissionId: string, allowed: boolean) => {
     try {
-      const { error } = await supabase
-        .from('role_permissions')
-        .update({ allowed })
-        .eq('id', permissionId);
+      const token = await getAccessToken();
+      if (!token) throw new Error('Sessão não encontrada');
 
-      if (error) throw error;
-
-      await logAction('update_permission', 'permissions', permissionId, { 
-        allowed,
-        tenant_id: currentTenant?.id 
+      const res = await fetch('/api/roles', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          action: 'update_permission',
+          permissionId,
+          allowed
+        })
       });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result?.error || 'Falha ao atualizar permissão');
+
+      // Logging realizado no backend (/api/roles: update_permission)
 
       toast.success('Permissão atualizada com sucesso');
       loadPermissions();
@@ -331,54 +388,56 @@ export const RoleManagement: React.FC = () => {
             </p>
           </div>
           
-          <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <UserPlus className="h-4 w-4 mr-2" />
-                Convidar Usuário
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Convidar Usuário</DialogTitle>
-                <DialogDescription>
-                  Adicione um novo usuário ao tenant atual
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    placeholder="usuario@exemplo.com"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="role">Role</Label>
-                  <Select value={inviteRole} onValueChange={(value: 'ADMIN' | 'USER') => setInviteRole(value)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="USER">Usuário</SelectItem>
-                      <SelectItem value="ADMIN">Administrador</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsInviteDialogOpen(false)}>
-                  Cancelar
+          <PermissionGuard allowedRoles={['ADMIN', 'SUPERADMIN']} resource="users" action="invite" mode="hide">
+            <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
+              <DialogTrigger asChild>
+                <Button>
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Convidar Usuário
                 </Button>
-                <Button onClick={handleInviteUser} disabled={!inviteEmail}>
-                  Convidar
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Convidar Usuário</DialogTitle>
+                  <DialogDescription>
+                    Adicione um novo usuário ao tenant atual
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="email">Email</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      placeholder="usuario@exemplo.com"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="role">Role</Label>
+                    <Select value={inviteRole} onValueChange={(value: 'ADMIN' | 'USER') => setInviteRole(value)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="USER">Usuário</SelectItem>
+                        <SelectItem value="ADMIN">Administrador</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setIsInviteDialogOpen(false)}>
+                    Cancelar
+                  </Button>
+                  <Button onClick={handleInviteUser} disabled={!inviteEmail}>
+                    Convidar
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </PermissionGuard>
         </div>
 
         <Tabs defaultValue="users" className="space-y-4">
@@ -425,8 +484,8 @@ export const RoleManagement: React.FC = () => {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={getRoleBadgeVariant(user.user_role)}>
-                            {user.user_role}
+                          <Badge variant={getRoleBadgeVariant(user.role)}>
+                            {user.role}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -434,29 +493,33 @@ export const RoleManagement: React.FC = () => {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
-                            {user.user_role !== 'SUPERADMIN' && (
+                            {user.role !== 'SUPERADMIN' && (
                               <>
-                                <Select
-                                  value={user.user_role}
-                                  onValueChange={(value: 'ADMIN' | 'USER') => 
-                                    handleChangeUserRole(user.id, value)
-                                  }
-                                >
-                                  <SelectTrigger className="w-32">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="USER">USER</SelectItem>
-                                    <SelectItem value="ADMIN">ADMIN</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleRemoveUser(user.id)}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
+                                <PermissionGuard allowedRoles={['ADMIN', 'SUPERADMIN']} resource="users" action="update_role" mode="hide">
+                                  <Select
+                                    value={user.role}
+                                    onValueChange={(value: 'ADMIN' | 'USER') => 
+                                      handleChangeUserRole(user.id, value)
+                                    }
+                                  >
+                                    <SelectTrigger className="w-32">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="USER">USER</SelectItem>
+                                      <SelectItem value="ADMIN">ADMIN</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </PermissionGuard>
+                                <PermissionGuard allowedRoles={['ADMIN', 'SUPERADMIN']} resource="users" action="remove" mode="hide">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleRemoveUser(user.id)}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </PermissionGuard>
                               </>
                             )}
                           </div>
@@ -541,6 +604,56 @@ export const RoleManagement: React.FC = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                <div className="mb-4 grid grid-cols-1 md:grid-cols-5 gap-4">
+                  <div>
+                    <Label htmlFor="audit-limit">Limite</Label>
+                    <Input
+                      id="audit-limit"
+                      type="number"
+                      min={1}
+                      max={200}
+                      value={auditLimit}
+                      onChange={(e) => setAuditLimit(Math.max(1, Math.min(200, parseInt(e.target.value || '0') || 0)))}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="audit-since">Desde (minutos)</Label>
+                    <Input
+                      id="audit-since"
+                      type="number"
+                      min={0}
+                      value={auditSinceMinutes}
+                      onChange={(e) => setAuditSinceMinutes(Math.max(0, parseInt(e.target.value || '0') || 0))}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="audit-action">Ação</Label>
+                    <Input
+                      id="audit-action"
+                      placeholder="ex: invite_user"
+                      value={auditActionFilter}
+                      onChange={(e) => setAuditActionFilter(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="audit-resource">Recurso</Label>
+                    <Input
+                      id="audit-resource"
+                      placeholder="ex: users"
+                      value={auditResourceFilter}
+                      onChange={(e) => setAuditResourceFilter(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <Button onClick={loadUserActions}>Aplicar filtros</Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => { setAuditLimit(50); setAuditSinceMinutes(0); setAuditActionFilter(''); setAuditResourceFilter(''); loadUserActions(); }}
+                    >
+                      Limpar
+                    </Button>
+                  </div>
+                </div>
                 <Table>
                   <TableHeader>
                     <TableRow>

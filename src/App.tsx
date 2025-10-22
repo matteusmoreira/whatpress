@@ -27,6 +27,8 @@ import RequireAuth from '@/components/auth/RequireAuth'
 import './App.css'
 import { Toaster } from '@/components/ui/toaster'
 import { isSupabaseConfigured } from '@/lib/supabase'
+import { AdminOnly, SuperAdminOnly } from '@/components/RoleGuard'
+import UnauthorizedPage from '@/pages/Unauthorized'
 
 function App() {
   return (
@@ -64,18 +66,21 @@ function App() {
             <Route path="scheduling" element={<SchedulingPage />} />
             <Route path="messages" element={<MessagesPage />} />
             <Route path="notifications" element={<NotificationsPage />} />
-            <Route path="quotas" element={<QuotaManagementPage />} />
-            <Route path="roles" element={<RoleManagement />} />
+            <Route path="quotas" element={<AdminOnly redirectTo="/unauthorized" showError={false}><QuotaManagementPage /></AdminOnly>} />
+            <Route path="roles" element={<AdminOnly redirectTo="/unauthorized" showError={false}><RoleManagement /></AdminOnly>} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="support" element={<SupportPage />} />
           </Route>
           <Route path="/superadmin" element={
             <RequireAuth>
-              <SuperAdminLayout />
+              <SuperAdminOnly redirectTo="/unauthorized" showError={false}>
+                <SuperAdminLayout />
+              </SuperAdminOnly>
             </RequireAuth>
           }>
             <Route index element={<SuperAdminPage />} />
           </Route>
+        <Route path="/unauthorized" element={<UnauthorizedPage />} />
         </Routes>
         <Toaster />
       </Router>
