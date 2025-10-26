@@ -1,14 +1,14 @@
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImwrYU13Y0NwdkUzZGVpeWQiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL3FhZmdoZnBtanZyZmx0cHByc3NiLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJhNDY1NTBiZi01MGQ5LTRjODAtYWMyOC01M2UyMmRiZTg5OGMiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzYxMTU4Mjc5LCJpYXQiOjE3NjExNTQ2NzksImVtYWlsIjoiYWRtaW5Ac2lzdGVtYS5jb20iLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImVtYWlsX3ZlcmlmaWVkIjp0cnVlfSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc2MTE1NDY3OX1dLCJzZXNzaW9uX2lkIjoiMTA2Y2NiOGItZWQ0ZS00NjA5LTk2NjUtZmJlNjQ3MTRjMDQ3IiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.YDEh5Kp-L_uZu1VJ2pOsVSwwndvZCg1_eKDXpUZptBM",
+  "access_token": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImwrYU13Y0NwdkUzZGVpeWQiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL3FhZmdoZnBtanZyZmx0cHByc3NiLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJhNDY1NTBiZi01MGQ5LTRjODAtYWMyOC01M2UyMmRiZTg5OGMiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzYxNDQxMjQwLCJpYXQiOjE3NjE0Mzc2NDAsImVtYWlsIjoiYWRtaW5Ac2lzdGVtYS5jb20iLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImVtYWlsX3ZlcmlmaWVkIjp0cnVlfSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc2MTQzNzY0MH1dLCJzZXNzaW9uX2lkIjoiODg3MmJiZGQtNjM4OC00YTdhLWE1NGMtNDBmZGE2MWNhZWZiIiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.Qg4r6xh9mJCBpwE93GVGBGLIoiOzyywWZuNXkPuFPko",
   "user": {
     "id": "a46550bf-50d9-4c80-ac28-53e22dbe898c",
     "aud": "authenticated",
     "role": "authenticated",
     "email": "admin@sistema.com",
-    "email_confirmed_at": "2025-10-22T14:19:20.85451Z",
+    "email_confirmed_at": "2025-10-24T21:38:14.729521Z",
     "phone": "",
-    "confirmed_at": "2025-10-22T14:19:20.85451Z",
-    "last_sign_in_at": "2025-10-22T17:37:59.73362994Z",
+    "confirmed_at": "2025-10-24T21:38:14.729521Z",
+    "last_sign_in_at": "2025-10-26T00:14:00.225061251Z",
     "app_metadata": {
       "provider": "email",
       "providers": [
@@ -37,7 +37,7 @@
       }
     ],
     "created_at": "2025-10-19T20:42:48.175325Z",
-    "updated_at": "2025-10-22T17:37:59.784129Z",
+    "updated_at": "2025-10-26T00:14:00.271673Z",
     "is_anonymous": false
   }
 }

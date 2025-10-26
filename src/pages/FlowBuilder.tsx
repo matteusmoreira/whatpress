@@ -55,6 +55,8 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui/tabs'
+import { useQuotas } from '@/hooks/useQuotas'
+import { toast } from 'sonner'
 
 // Tipos de nós do fluxo
 type NodeType = 'trigger' | 'message' | 'delay' | 'condition' | 'action' | 'end'
@@ -215,6 +217,9 @@ export default function FlowBuilder() {
   const [showNodeDialog, setShowNodeDialog] = useState(false)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
 
+  const { isFeatureBlocked } = useQuotas()
+  const messagesFeatureBlocked = isFeatureBlocked('messages')
+
   const addNode = useCallback((type: NodeType) => {
     const newNode: FlowNode = {
       id: `${type}-${Date.now()}`,
@@ -364,11 +369,20 @@ export default function FlowBuilder() {
             <Button 
               variant={flowData.isActive ? "destructive" : "default"}
               className="gap-2"
-              onClick={() => setFlowData(prev => ({ 
-                ...prev, 
-                isActive: !prev.isActive,
-                lastModified: new Date().toISOString()
-              }))}
+              onClick={() => {
+                if (!flowData.isActive) {
+                  const hasMessageNode = flowData.nodes.some(n => n.type === 'message')
+                  if (messagesFeatureBlocked && hasMessageNode) {
+                    toast.error('Ativação bloqueada: envio de mensagens indisponível no seu plano.')
+                    return
+                  }
+                }
+                setFlowData(prev => ({ 
+                  ...prev, 
+                  isActive: !prev.isActive,
+                  lastModified: new Date().toISOString()
+                }))
+              }}
             >
               {flowData.isActive ? (
                 <>
@@ -404,7 +418,15 @@ export default function FlowBuilder() {
                 <Button 
                   variant="outline" 
                   className="w-full justify-start gap-2"
-                  onClick={() => addNode('message')}
+                  disabled={messagesFeatureBlocked}
+                  title={messagesFeatureBlocked ? 'Envio de mensagens indisponível no seu plano' : undefined}
+                  onClick={() => {
+                    if (messagesFeatureBlocked) {
+                      toast.info('Recurso indisponível no seu plano: envio de mensagens está bloqueado.')
+                      return
+                    }
+                    addNode('message')
+                  }}
                 >
                   <MessageSquare className="h-4 w-4" />
                   Mensagem
@@ -523,7 +545,13 @@ export default function FlowBuilder() {
                   <p className="text-muted-foreground mb-4">
                     Adicione nós da barra lateral para criar sua sequência automatizada
                   </p>
-                  <Button onClick={() => addNode('message')} className="gap-2">
+                  <Button disabled={messagesFeatureBlocked} title={messagesFeatureBlocked ? 'Envio de mensagens indisponível no seu plano' : undefined} onClick={() => {
+                    if (messagesFeatureBlocked) {
+                      toast.info('Recurso indisponível no seu plano: envio de mensagens está bloqueado.')
+                      return
+                    }
+                    addNode('message')
+                  }} className="gap-2">
                     <Plus className="h-4 w-4" />
                     Adicionar Primeiro Nó
                   </Button>
@@ -543,6 +571,12 @@ export default function FlowBuilder() {
               Configure as propriedades deste nó
             </DialogDescription>
           </DialogHeader>
+          
+          {selectedNode?.type === 'message' && messagesFeatureBlocked && (
+            <div className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900">
+              O envio de mensagens está bloqueado no seu plano. Você pode configurar o conteúdo do nó, mas o fluxo não enviará mensagens enquanto o bloqueio persistir.
+            </div>
+          )}
           
           {selectedNode && (
             <Tabs defaultValue="general" className="space-y-4">

@@ -65,6 +65,12 @@ import { CampaignEngine } from '@/components/CampaignEngine'
 import { MultiSessionManager } from '@/components/MultiSessionManager'
 import { RandomizationSettings } from '@/components/RandomizationSettings'
 import { RateLimitConfigComponent } from '@/components/RateLimitConfig'
+import { useQuotas } from '@/hooks/useQuotas'
+import { useRateLimit } from '@/hooks/useRateLimit'
+import { toast } from 'sonner'
+import { GatingBanner } from '@/components/GatingBanner'
+import { formatUsageTooltip } from '@/lib/utils'
+import { QuotaAlertsManager } from '@/components/QuotaAlertsManager'
 
 export default function Campaigns() {
   const navigate = useNavigate()
@@ -84,6 +90,24 @@ export default function Campaigns() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [campaignToDelete, setCampaignToDelete] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+
+  // Gating: quotas + rate limit
+  const { getResourceUsage, canCreateResource, isFeatureBlocked, alerts, acknowledgeAlert } = useQuotas()
+  const { getStatus, canSendMessage, getNextAllowedTime } = useRateLimit()
+  const campaignsUsage = getResourceUsage('campaigns')
+  const campaignsQuotaBlocked = !!campaignsUsage && (campaignsUsage.status === 'blocked' || !canCreateResource('campaigns') || isFeatureBlocked('campaigns'))
+  const messagesFeatureBlocked = isFeatureBlocked('messages')
+  const rateStatusGlobal = getStatus('global')
+  const canSendGlobal = canSendMessage('global')
+  const rateLimitedNow = !canSendGlobal
+  const nextAllowedTime = getNextAllowedTime('global')
+  const canStartActions = !messagesFeatureBlocked && canSendGlobal
+  const criticalState = !!campaignsUsage && campaignsUsage.status === 'critical'
+
+
+
+
+
 
   const filteredCampaigns = campaigns.filter(campaign => {
     const matchesSearch = campaign.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -145,6 +169,19 @@ export default function Campaigns() {
     }
   }
 
+  const handleStartGated = async (action: () => Promise<any>, campaignId: string) => {
+    if (messagesFeatureBlocked) {
+      toast.error('Envio de mensagens bloqueado pelo seu plano.')
+      return
+    }
+    if (!canSendGlobal) {
+      const nextStr = nextAllowedTime ? nextAllowedTime.toLocaleString('pt-BR') : 'em breve'
+      toast.error(`Rate limit ativo. Próximo envio permitido ${nextStr}.`)
+      return
+    }
+    await handleAction(action, campaignId)
+  }
+
   const handleDelete = async () => {
     if (!campaignToDelete) return
     
@@ -186,12 +223,26 @@ export default function Campaigns() {
             <BarChart3 className="h-4 w-4" />
             Relatórios
           </Button>
-          <Button className="gap-2" onClick={() => navigate('/dashboard/campaigns/create')}>
+          <Button className="gap-2" onClick={() => navigate('/dashboard/campaigns/create')} disabled={campaignsQuotaBlocked} title={campaignsQuotaBlocked ? formatUsageTooltip(campaignsUsage?.current, campaignsUsage?.max) : undefined}>
             <Plus className="h-4 w-4" />
             Nova Campanha
           </Button>
         </div>
       </div>
+
+      {/* Quota alerts (toasts) */}
+      <QuotaAlertsManager showCriticalToast usage={campaignsUsage} />
+
+      {/* Gating Banner */}
+      <GatingBanner
+        campaignsQuotaBlocked={campaignsQuotaBlocked}
+        messagesFeatureBlocked={messagesFeatureBlocked}
+        rateLimitedNow={rateLimitedNow}
+        criticalState={criticalState}
+        campaignsUsage={campaignsUsage}
+        nextAllowedTime={nextAllowedTime}
+        rateTimeMode="relative"
+      />
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -339,7 +390,7 @@ export default function Campaigns() {
                       : 'Crie sua primeira campanha para começar'}
                   </p>
                   {!searchTerm && filterStatus === 'all' && (
-                    <Button onClick={() => navigate('/dashboard/campaigns/create')}>
+                    <Button onClick={() => navigate('/dashboard/campaigns/create')} disabled={campaignsQuotaBlocked} title={campaignsQuotaBlocked ? formatUsageTooltip(campaignsUsage?.current, campaignsUsage?.max) : undefined}>
                       <Plus className="h-4 w-4 mr-2" />
                       Criar Primeira Campanha
                     </Button>
@@ -414,8 +465,9 @@ export default function Campaigns() {
                           )}
                           {campaign.status === 'paused' && (
                             <DropdownMenuItem 
-                              className="gap-2"
-                              onClick={() => handleAction(() => resumeCampaign(campaign.id), campaign.id)}
+                              className={`gap-2 ${!canStartActions ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              disabled={!canStartActions}
+                              onClick={() => handleStartGated(() => resumeCampaign(campaign.id), campaign.id)}
                             >
                               <Play className="h-4 w-4" />
                               Retomar
@@ -423,8 +475,9 @@ export default function Campaigns() {
                           )}
                           {(campaign.status === 'scheduled' || campaign.status === 'draft') && (
                             <DropdownMenuItem 
-                              className="gap-2"
-                              onClick={() => handleAction(() => startCampaign(campaign.id), campaign.id)}
+                              className={`gap-2 ${!canStartActions ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              disabled={!canStartActions}
+                              onClick={() => handleStartGated(() => startCampaign(campaign.id), campaign.id)}
                             >
                               <Play className="h-4 w-4" />
                               Iniciar

@@ -85,7 +85,11 @@ import FlowBuilder from '@/components/FlowBuilder'
 import { useAuth } from '@/hooks/useAuth'
 // add evolution api + toast imports
 import { useEvolutionApi } from '@/hooks/useEvolutionApi'
+import { useQuotas } from '@/hooks/useQuotas'
+import { useRateLimit } from '@/hooks/useRateLimit'
 import { toast } from 'sonner'
+import { GatingBanner } from '@/components/GatingBanner'
+import { QuotaAlertsManager } from '@/components/QuotaAlertsManager'
 
 const TRIGGER_TYPES = [
   {
@@ -186,7 +190,15 @@ export default function Automation() {
   } = useAutomations()
 
   const { isAuthenticated } = useAuth()
-  const { instances, sendMessage, loading: evoLoading } = useEvolutionApi()
+const { instances, sendMessage, loading: evoLoading } = useEvolutionApi()
+const { isFeatureBlocked, getResourceUsage } = useQuotas()
+const messagesFeatureBlocked = isFeatureBlocked('messages')
+const campaignsUsage = getResourceUsage('campaigns')
+const criticalState = campaignsUsage?.status === 'critical'
+const { getStatus, canSendMessage, getNextAllowedTime } = useRateLimit()
+const globalStatus = getStatus('global')
+const rateLimitedNow = globalStatus?.isLimited
+const nextAllowedTime = globalStatus?.nextAllowedTime
 
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
@@ -372,6 +384,12 @@ export default function Automation() {
   }
 
   const handleToggleStatus = async (automation: Automation) => {
+    // Gating: bloquear ativação quando a automação tiver ação de envio e o plano não permitir
+    const hasSendAction = automation.actions?.some(a => a.type === 'send_message')
+    if (!automation.is_active && messagesFeatureBlocked && hasSendAction) {
+      toast.error('Ativação bloqueada: envio de mensagens indisponível no seu plano.')
+      return
+    }
     try {
       setActionLoading(automation.id)
       await toggleAutomationStatus(automation.id)
@@ -396,6 +414,11 @@ export default function Automation() {
   const handleTest = async (automation: Automation) => {
     // Em ambiente real, abrir diálogo de teste para escolher instância e número
     if (isAuthenticated) {
+      const hasSendAction = automation.actions?.some(a => a.type === 'send_message')
+      if (messagesFeatureBlocked && hasSendAction) {
+        toast.error('Teste bloqueado: recurso de mensagens indisponível no seu plano.')
+        return
+      }
       setSelectedAutomation(automation)
       setTestDialogOpen(true)
       setSelectedInstanceId(connectedInstances[0]?.id || null)
@@ -431,6 +454,19 @@ export default function Automation() {
     const instance = instances.find(i => i.id === selectedInstanceId)
     if (!instance || instance.status !== 'connected') {
       toast.error('Instância não conectada')
+      return
+    }
+
+    // Gating de envio de teste
+    if (messagesFeatureBlocked) {
+      toast.error('Envio de teste bloqueado: recurso de mensagens indisponível no seu plano.')
+      return
+    }
+    const canInstance = canSendMessage('instance', selectedInstanceId)
+    const canGlobal = canSendMessage('global')
+    if (!canInstance || !canGlobal) {
+      const nextAllowed = getNextAllowedTime('instance', selectedInstanceId) || getNextAllowedTime('global')
+      toast.error('Envio bloqueado pelo rate limit. Próximo envio permitido ' + (nextAllowed ? new Date(nextAllowed as number).toLocaleString() : 'em breve'))
       return
     }
 
@@ -531,6 +567,24 @@ export default function Automation() {
           Nova Automação
         </Button>
       </div>
+
+      {/* Gating banners (quotas, rate limit, messaging feature) */}
+      <GatingBanner
+        campaignsQuotaBlocked={campaignsUsage?.status === 'blocked'}
+        messagesFeatureBlocked={messagesFeatureBlocked}
+        rateLimitedNow={rateLimitedNow}
+        criticalState={criticalState}
+        campaignsUsage={campaignsUsage}
+        nextAllowedTime={nextAllowedTime as number | Date | null}
+        rateTimeMode="relative"
+      />
+      {/* Quota alerts manager for Campaigns (toasts) */}
+      <QuotaAlertsManager
+        usage={campaignsUsage}
+        resourceLabel="Campanhas"
+        autoAcknowledge
+        showCriticalToast
+      />
 
       {!isAuthenticated && (
         <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
@@ -694,7 +748,11 @@ export default function Automation() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleTest(automation)}>
+                        <DropdownMenuItem
+                          onClick={() => handleTest(automation)}
+                          disabled={messagesFeatureBlocked && automation.actions?.some(a => a.type === 'send_message')}
+                          title={messagesFeatureBlocked && automation.actions?.some(a => a.type === 'send_message') ? 'Teste bloqueado: envio de mensagens indisponível no seu plano' : undefined}
+                        >
                           <TestTube className="h-4 w-4 mr-2" />
                           Testar
                         </DropdownMenuItem>
@@ -707,7 +765,11 @@ export default function Automation() {
                           Duplicar
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => handleToggleStatus(automation)}>
+                        <DropdownMenuItem
+                          onClick={() => handleToggleStatus(automation)}
+                          disabled={!automation.is_active && messagesFeatureBlocked && automation.actions?.some(a => a.type === 'send_message')}
+                          title={!automation.is_active && messagesFeatureBlocked && automation.actions?.some(a => a.type === 'send_message') ? 'Ativação bloqueada: envio de mensagens indisponível no seu plano' : undefined}
+                        >
                           {automation.is_active ? (
                             <>
                               <Pause className="h-4 w-4 mr-2" />
@@ -806,6 +868,21 @@ export default function Automation() {
                 </Select>
               </div>
 
+              {messagesFeatureBlocked && (
+                <div className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm">
+                  Envio de mensagens está bloqueado no seu plano. Faça upgrade para testar automações com envio de mensagens.
+                </div>
+              )}
+
+              {selectedInstanceId && getStatus('instance', selectedInstanceId)?.isLimited && (
+                <div className="rounded-md border border-orange-300 bg-orange-50 p-3 text-sm">
+                  Limite de envio atingido nesta instância. Próximo envio permitido {(() => {
+                    const t = getNextAllowedTime('instance', selectedInstanceId)
+                    return t ? new Date(Number(t)).toLocaleString() : 'em breve'
+                  })()}.
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label>Número para teste (com DDI/DDD)</Label>
                 <Input value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder="Ex.: 5599999999999" />
@@ -820,7 +897,24 @@ export default function Automation() {
 
               <DialogFooter>
                 <Button variant="outline" onClick={() => setTestDialogOpen(false)} disabled={testing}>Cancelar</Button>
-                <Button onClick={handleRunTest} disabled={testing || !selectedInstanceId || !testPhone} className="gap-2">
+                <Button
+                  onClick={handleRunTest}
+                  disabled={
+                    testing ||
+                    !selectedInstanceId ||
+                    !testPhone ||
+                    messagesFeatureBlocked ||
+                    (!!selectedInstanceId && !!getStatus('instance', selectedInstanceId)?.isLimited)
+                  }
+                  title={
+                    messagesFeatureBlocked
+                      ? 'Recurso de mensagens indisponível no seu plano'
+                      : (!!selectedInstanceId && getStatus('instance', selectedInstanceId)?.isLimited)
+                        ? 'Rate limit ativo. Aguarde a próxima janela de envio'
+                        : undefined
+                  }
+                  className="gap-2"
+                >
                   {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <TestTube className="h-4 w-4" />}
                   Executar Teste
                 </Button>

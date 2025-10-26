@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useRoleContext, UserRole } from '@/contexts/RoleContext';
 import { useToast } from '@/hooks/use-toast';
+import { Resources, Actions, isValidPermission } from '@/constants/permissions';
 
 export interface PermissionGuardProps {
   allowedRoles?: UserRole[];
-  resource?: string;
-  action?: string;
+  resource?: (typeof Resources)[keyof typeof Resources];
+  action?: (typeof Actions)[keyof typeof Actions];
   requireAll?: boolean; // Se true, exige role E permissão. Se false (default), basta uma das condições
   mode?: 'hide' | 'disable'; // hide: não renderiza; disable: renderiza desabilitado
   fallback?: React.ReactNode; // render quando negado, se mode === 'hide'
@@ -39,7 +40,15 @@ export function PermissionGuard({
 
   const allowedByPermission = useMemo(() => {
     if (!resource) return undefined; // não avalia
-    if (action) return hasPermission(resource, action);
+    // Se forneceu action, validar e checar permissão específica
+    if (action) {
+      if (!isValidPermission(resource, action)) {
+        console.warn(`[PermissionGuard] Invalid permission combo: resource="${resource}" action="${action}"`);
+        return false;
+      }
+      return hasPermission(resource, action);
+    }
+    // Sem action, checa acesso ao recurso
     return canAccess(resource);
   }, [resource, action, hasPermission, canAccess]);
 
@@ -69,7 +78,7 @@ export function PermissionGuard({
         });
       }
       // Registrar auditoria
-      logAction('access_denied_component', resource || 'unknown', undefined, {
+      logAction('access_denied_component', resource || 'unknown', {
         action: action || null,
         currentRole,
         allowedRoles: allowedRoles || null,

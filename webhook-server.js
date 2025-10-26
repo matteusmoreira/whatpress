@@ -74,7 +74,7 @@ async function saveMessage(messageData, instanceName) {
     // Primeiro, buscar a instância para obter o user_id
     const { data: instance, error: instanceError } = await supabaseService
       .from('whatsapp_instances')
-      .select('id, user_id')
+      .select('id, user_id, phone_number, tenant_id')
       .eq('api_key', instanceName)
       .single()
 
@@ -91,6 +91,8 @@ async function saveMessage(messageData, instanceName) {
     let text = ''
     let messageType = 'text'
     let mediaUrl = null
+    const remoteJid = message.key?.remoteJid || ''
+    const fromNumber = typeof remoteJid === 'string' ? remoteJid.split('@')[0] : remoteJid
 
     // Extrair texto da mensagem
     if (messageContent.conversation) {
@@ -117,15 +119,16 @@ async function saveMessage(messageData, instanceName) {
       .insert([
         {
           instance_id: instance.id,
+          contact_id: await saveContact(fromNumber, message.pushName, instance.id, instance.user_id, instance.tenant_id),
           message_id: message.key.id,
-          from_number: message.key.remoteJid,
-          to_number: message.key.fromMe ? message.key.remoteJid : instanceName,
+          from_number: fromNumber,
+          to_number: instance.phone_number || fromNumber,
           content: text,
           message_type: messageType,
-          media_url: mediaUrl,
           is_from_me: message.key.fromMe,
           timestamp: new Date(message.messageTimestamp * 1000),
-          status: 'received'
+          status: 'delivered',
+          metadata: { remoteJid }
         }
       ])
 
@@ -141,7 +144,7 @@ async function saveMessage(messageData, instanceName) {
 
     // Salvar/atualizar contato se não for mensagem própria
     if (!message.key.fromMe) {
-      await saveContact(message.key.remoteJid, message.pushName, instance.id, instance.user_id)
+      // contato já garantido acima em contact_id
     }
 
   } catch (err) {
@@ -150,7 +153,7 @@ async function saveMessage(messageData, instanceName) {
 }
 
 // Função para salvar/atualizar contato
-async function saveContact(phoneNumber, name, instanceId, userId) {
+async function saveContact(phoneNumber, name, instanceId, userId, tenantId) {
   if (!supabaseService) return
 
   try {
@@ -168,33 +171,38 @@ async function saveContact(phoneNumber, name, instanceId, userId) {
         await supabaseService
           .from('contacts')
           .update({ 
-            name: name,
-            last_message_at: new Date().toISOString()
+            name: name
           })
           .eq('id', existingContact.id)
       }
+      return existingContact.id
     } else {
       // Criar novo contato
-      const { error } = await supabaseService
+      const { data: inserted, error } = await supabaseService
         .from('contacts')
         .insert([
           {
             instance_id: instanceId,
             user_id: userId,
+            tenant_id: tenantId,
             phone_number: phoneNumber,
-            name: name || phoneNumber,
-            last_message_at: new Date().toISOString()
+            name: name || phoneNumber
           }
         ])
+        .select('id')
+        .single()
 
       if (error) {
         console.error('[Supabase] Failed to save contact:', error.message)
+        return null
       } else {
         console.log('✅ Contato salvo:', { phone: phoneNumber, name })
+        return inserted?.id || null
       }
     }
   } catch (err) {
     console.error('[Supabase] Error saving contact:', err)
+    return null
   }
 }
 

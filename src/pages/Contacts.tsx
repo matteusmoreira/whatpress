@@ -41,6 +41,11 @@ import {
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
 import { supabase } from '@/lib/supabase'
+import { useQuotas } from '@/hooks/useQuotas'
+import { useNavigate } from 'react-router-dom'
+import { QuotaAlertsManager } from '@/components/QuotaAlertsManager'
+import { GatingBanner } from '@/components/GatingBanner'
+import { formatUsageTooltip } from '@/lib/utils'
 
 interface Contact {
   id: string
@@ -74,6 +79,9 @@ export default function Contacts() {
   
   const { user } = useAuth()
   const { toast } = useToast()
+  const { canCreateResource, getResourceUsage, loading: quotasLoading, isFeatureBlocked } = useQuotas()
+  const messagesFeatureBlocked = isFeatureBlocked('messages')
+  const navigate = useNavigate()
 
   // Carregar dados iniciais
   useEffect(() => {
@@ -207,6 +215,22 @@ export default function Contacts() {
     return cleanPhone
   }
 
+  const canImportContacts = canCreateResource('contacts')
+  const contactsUsage = getResourceUsage('contacts')
+
+  const handleSendMessageFromContact = (contact: Contact) => {
+    if (messagesFeatureBlocked) {
+      toast({
+        title: 'Envio de mensagens indisponível',
+        description: 'Seu plano atual não permite o envio de mensagens. Faça upgrade para liberar este recurso.',
+        variant: 'destructive'
+      })
+      return
+    }
+    // Navega para a página de Mensagens. (Opcional: poderíamos enviar o número via query string e tratar em Messages)
+    navigate('/messages')
+  }
+
   if (loading) {
     return (
       <div className="h-[calc(100vh-2rem)] flex items-center justify-center">
@@ -220,6 +244,7 @@ export default function Contacts() {
 
   return (
     <div className="space-y-6">
+      <QuotaAlertsManager showCriticalToast usage={contactsUsage} resourceLabel="contatos" />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -231,7 +256,7 @@ export default function Contacts() {
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Atualizar
           </Button>
-          <Button variant="outline" className="gap-2">
+          <Button variant="outline" className="gap-2" disabled={quotasLoading || !canImportContacts} title={!canImportContacts ? formatUsageTooltip(contactsUsage?.current, contactsUsage?.max) : undefined}>
             <Upload className="h-4 w-4" />
             Importar
           </Button>
@@ -241,6 +266,9 @@ export default function Contacts() {
           </Button>
         </div>
       </div>
+
+      {/* Quota banner when blocked */}
+      <GatingBanner resourceQuotaBlocked={!quotasLoading && !canImportContacts} resourceUsage={contactsUsage} resourceLabel="Contatos" messagesFeatureBlocked={messagesFeatureBlocked} rateTimeMode="relative" />
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -396,7 +424,7 @@ export default function Contacts() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => handleSendMessageFromContact(contact)} title={messagesFeatureBlocked ? 'Envio de mensagens indisponível no seu plano' : undefined}>
                         <MessageSquare className="h-4 w-4 mr-2" />
                         Enviar Mensagem
                       </DropdownMenuItem>

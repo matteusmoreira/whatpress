@@ -25,6 +25,7 @@ import { useRateLimit } from '@/hooks/useRateLimit';
 import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useQuotas } from '@/hooks/useQuotas';
 
 interface CampaignEngineProps {
   campaignId?: string;
@@ -52,10 +53,48 @@ export const CampaignEngine: React.FC<CampaignEngineProps> = ({
 
   const { instances, selectBestInstance } = useMultiSession();
   const { activeProfile } = useRandomization();
-  const { canSendMessage, getStatus } = useRateLimit();
+  // Include getNextAllowedTime to show the next allowed send time
+  const { canSendMessage, getStatus, getNextAllowedTime } = useRateLimit();
+  // Use quotas to detect feature blocking
+  const { isFeatureBlocked } = useQuotas();
 
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [realTimeMetrics, setRealTimeMetrics] = useState<CampaignMetrics | null>(null);
+
+  // Gating flags (messages feature + global rate limit)
+  const messagesFeatureBlocked = isFeatureBlocked('messages');
+  const rateStatusGlobal = getStatus('global');
+  const canSendGlobal = canSendMessage('global');
+  const rateLimitedNow = !canSendGlobal;
+  const nextAllowedTime = getNextAllowedTime('global');
+  const canStartActions = !messagesFeatureBlocked && canSendGlobal;
+
+  // Auto-start scheduled campaigns when their time arrives
+  useEffect(() => {
+    let cancelled = false;
+    const checkAndStart = async () => {
+      try {
+        await refreshData();
+        const now = new Date();
+        const toStart = campaigns.filter(c => c.status === 'scheduled' && c.scheduled_at && new Date(c.scheduled_at) <= now);
+        for (const c of toStart) {
+          if (cancelled) break;
+          await startCampaign(c.id);
+        }
+      } catch (e) {
+        console.warn('Auto-start check falhou:', e);
+      }
+    };
+
+    // Initial check
+    checkAndStart();
+    // Poll every 30s
+    const interval = setInterval(checkAndStart, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [campaigns, refreshData, startCampaign]);
 
   // Select campaign
   useEffect(() => {
@@ -85,6 +124,28 @@ export const CampaignEngine: React.FC<CampaignEngineProps> = ({
 
   const handleCampaignAction = async (action: string, campaign: Campaign) => {
     try {
+      // Apply gating for actions that trigger sending (start, resume, retry)
+      if (action === 'start' || action === 'resume' || action === 'retry') {
+        if (messagesFeatureBlocked) {
+          toast({
+            title: 'Envio bloqueado pelo plano',
+            description: 'Seu plano atual bloqueia o envio de mensagens. Atualize seu plano para iniciar ou retomar campanhas.',
+            variant: 'destructive',
+          });
+          return;
+        }
+        if (!canSendGlobal) {
+          toast({
+            title: 'Rate limit ativo',
+            description: nextAllowedTime
+              ? `Próximo envio permitido ${nextAllowedTime.toLocaleString('pt-BR')}`
+              : 'Envio temporariamente bloqueado. Tente novamente em breve.',
+            variant: 'destructive',
+          });
+          return;
+        }
+      }
+
       let success = false;
       
       switch (action) {
@@ -108,15 +169,15 @@ export const CampaignEngine: React.FC<CampaignEngineProps> = ({
       if (success) {
         await refreshData();
         toast({
-          title: "Sucesso",
-          description: `Ação "${action}" executada com sucesso`
+          title: 'Sucesso',
+          description: `Ação "${action}" executada com sucesso`,
         });
       }
     } catch (error) {
       toast({
-        title: "Erro",
+        title: 'Erro',
         description: `Falha ao executar ação "${action}"`,
-        variant: "destructive"
+        variant: 'destructive',
       });
     }
   };
@@ -205,6 +266,28 @@ export const CampaignEngine: React.FC<CampaignEngineProps> = ({
           </div>
         </CardHeader>
       </Card>
+
+      {/* Gating Banner for Engine-level actions */}
+      {(messagesFeatureBlocked || rateLimitedNow) && (
+        <div className={`p-4 rounded-md border ${messagesFeatureBlocked ? 'bg-yellow-50 border-yellow-200' : 'bg-amber-50 border-amber-200'}`}>
+          <div className="flex items-start gap-3">
+            <AlertTriangle className={`h-5 w-5 ${messagesFeatureBlocked ? 'text-yellow-600' : 'text-amber-600'}`} />
+            <div className="text-sm">
+              {messagesFeatureBlocked ? (
+                <>
+                  <p className="font-medium">Envio de mensagens bloqueado</p>
+                  <p>Seu plano atual bloqueia o envio de mensagens. Atualize seu plano para iniciar campanhas.</p>
+                </>
+              ) : (
+                <>
+                  <p className="font-medium">Rate limit ativo</p>
+                  <p>Próximo envio permitido {nextAllowedTime ? nextAllowedTime.toLocaleString('pt-BR') : 'em breve'}.</p>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <Tabs defaultValue="campaigns" className="space-y-4">
         <TabsList>
@@ -314,7 +397,9 @@ export const CampaignEngine: React.FC<CampaignEngineProps> = ({
                           <div className="flex items-center gap-2">
                             {campaign.status === 'draft' && (
                               <Button 
-                                size="sm" 
+                                size="sm"
+                                disabled={!canStartActions}
+                                title={!canStartActions ? (messagesFeatureBlocked ? 'Envio de mensagens bloqueado pelo plano' : 'Rate limit ativo, aguarde para iniciar') : undefined}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleCampaignAction('start', campaign);
@@ -354,6 +439,8 @@ export const CampaignEngine: React.FC<CampaignEngineProps> = ({
                               <>
                                 <Button 
                                   size="sm"
+                                  disabled={!canStartActions}
+                                  title={!canStartActions ? (messagesFeatureBlocked ? 'Envio de mensagens bloqueado pelo plano' : 'Rate limit ativo, aguarde para retomar') : undefined}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleCampaignAction('resume', campaign);
@@ -379,6 +466,8 @@ export const CampaignEngine: React.FC<CampaignEngineProps> = ({
                               <Button 
                                 size="sm" 
                                 variant="outline"
+                                disabled={!canStartActions}
+                                title={!canStartActions ? (messagesFeatureBlocked ? 'Envio de mensagens bloqueado pelo plano' : 'Rate limit ativo, aguarde para reenviar') : undefined}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleCampaignAction('retry', campaign);

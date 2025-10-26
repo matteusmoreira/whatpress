@@ -19,7 +19,7 @@ import {
   Bell,
   TrendingUp
 } from 'lucide-react'
-import { useRoles } from '@/hooks/useRoles'
+import { useRoleContext } from '@/contexts/RoleContext'
 
 interface SidebarProps {
   className?: string
@@ -28,9 +28,9 @@ interface SidebarProps {
 export function Sidebar({ className }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false)
   const location = useLocation()
-  const { currentRole } = useRoles()
-  const isSuperAdmin = currentRole?.role_type === 'SUPERADMIN'
-  const isAdmin = isSuperAdmin || currentRole?.role_type === 'ADMIN'
+  const { currentRole, isSuperAdmin, isAdmin } = useRoleContext()
+  // currentRole is a string ("SUPERADMIN" | "ADMIN" | "USER" | "NONE")
+  // use the provided booleans from useRoles to avoid incorrect property access
 
   const navigation = [
     { 

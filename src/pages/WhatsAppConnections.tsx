@@ -44,6 +44,12 @@ import { useToast } from '@/hooks/use-toast'
 import { WhatsAppInstance } from '@/services/whatsappInstanceService'
 import { InstanceHealthMonitor } from '@/components/InstanceHealthMonitor'
 import { Textarea } from '@/components/ui/textarea'
+import { useQuotas } from '@/hooks/useQuotas'
+import { useRateLimit } from '@/hooks/useRateLimit'
+import { RateLimitConfigComponent } from "@/components/RateLimitConfig"
+import { QuotaAlertsManager } from '@/components/QuotaAlertsManager'
+import { GatingBanner } from '@/components/GatingBanner'
+import { formatUsageTooltip, formatRelativeTime } from '@/lib/utils'
 
 export default function WhatsAppConnections() {
   const [searchTerm, setSearchTerm] = useState('')
@@ -75,11 +81,24 @@ export default function WhatsAppConnections() {
   
   const { toast } = useToast()
 
+  const { canCreateResource, getResourceUsage, loading: quotasLoading, isFeatureBlocked } = useQuotas()
+  const canCreateConn = canCreateResource('connections')
+  const connectionUsage = getResourceUsage('connections')
+  const messagesFeatureBlocked = isFeatureBlocked('messages')
+
+  // Rate limit hooks for sending messages
+  const { canSendMessage: canSendRate, getStatus: getRateStatus, getNextAllowedTime, getRemainingQuota, isLoading: rateLimitLoading } = useRateLimit()
+
   // Sempre pegar a versão "ao vivo" da instância selecionada, acompanhando atualizações em tempo real vindas do Supabase/webhook
   const selectedLive = selectedInstance ? (instances.find(i => i.id === selectedInstance.id) ?? selectedInstance) : null
  
   const qrToDisplay = selectedLive?.qr_code
   const hasQR = !!qrToDisplay
+
+  // Rate status for current selected instance
+  const sendRateStatus = getRateStatus('instance', selectedLive?.id) || getRateStatus('global')
+  const canSendNow = canSendRate('instance', selectedLive?.id)
+  const remainingSendQuota = getRemainingQuota('instance', selectedLive?.id)
 
   // Filtrar instâncias baseado no termo de busca
   const filteredInstances = instances.filter(instance =>
@@ -93,6 +112,18 @@ export default function WhatsAppConnections() {
         title: "Nome obrigatório",
         description: "Por favor, digite um nome para a instância.",
         variant: "destructive"
+      })
+      return
+    }
+
+    // Bloqueio por quota de conexões
+    if (!canCreateConn) {
+      toast({
+        title: 'Limite de conexões atingido',
+        description: connectionUsage 
+          ? `Você já utiliza ${connectionUsage.current} de ${connectionUsage.max} conexões. Exclua uma instância ou faça upgrade do plano.`
+          : 'Seu limite de conexões foi atingido. Exclua uma instância ou faça upgrade do plano.',
+        variant: 'destructive'
       })
       return
     }
@@ -206,6 +237,13 @@ export default function WhatsAppConnections() {
   }
 
   const handleOpenSendDialog = (instance: WhatsAppInstance) => {
+    if (messagesFeatureBlocked) {
+      toast({
+        title: 'Envio de mensagens indisponível',
+        description: 'Seu plano atual não permite o envio de mensagens. Faça upgrade para liberar este recurso.',
+        variant: 'destructive'
+      })
+    }
     setSelectedInstance(instance)
     setSendToNumber(instance.phone_number || '')
     setSendText('')
@@ -221,8 +259,25 @@ export default function WhatsAppConnections() {
       toast({ title: 'Campos obrigatórios', description: 'Informe o número e a mensagem.', variant: 'destructive' })
       return
     }
+    if (messagesFeatureBlocked) {
+      toast({ title: 'Envio de mensagens indisponível', description: 'Seu plano atual não permite o envio de mensagens. Faça upgrade para liberar este recurso.', variant: 'destructive' })
+      return
+    }
     if (selectedInstance.status !== 'connected') {
       toast({ title: 'Instância não conectada', description: 'Conecte a instância para enviar mensagens.', variant: 'destructive' })
+      return
+    }
+
+    // Bloqueio por rate limit (UI nível extra, além do hook)
+    const status = getRateStatus('instance', selectedInstance.id) || getRateStatus('global')
+    if (!canSendRate('instance', selectedInstance.id) && status) {
+      toast({
+        title: 'Limite de envio atingido',
+        description: status.nextAllowedTime 
+          ? `Aguarde até ${status.nextAllowedTime.toLocaleTimeString('pt-BR')} para enviar novamente.`
+          : 'Envio temporariamente bloqueado pelas configurações de rate limit.',
+        variant: 'destructive'
+      })
       return
     }
 
@@ -246,6 +301,7 @@ export default function WhatsAppConnections() {
 
   return (
     <div className="space-y-6">
+      <QuotaAlertsManager showCriticalToast usage={connectionUsage} resourceLabel="conexões" />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Conexões WhatsApp</h1>
@@ -255,7 +311,7 @@ export default function WhatsAppConnections() {
         </div>
         <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
           <DialogTrigger asChild>
-            <Button>
+            <Button disabled={!canCreateConn} title={!canCreateConn ? formatUsageTooltip(connectionUsage?.current, connectionUsage?.max) : undefined}>
               <Plus className="w-4 h-4 mr-2" />
               Nova Conexão
             </Button>
@@ -282,12 +338,14 @@ export default function WhatsAppConnections() {
                   }}
                 />
               </div>
+              {/* Banner dentro do diálogo quando bloqueado por quota */}
+              <GatingBanner resourceQuotaBlocked={!quotasLoading && !canCreateConn} resourceUsage={connectionUsage} resourceLabel="Conexões" />
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
                 Cancelar
               </Button>
-              <Button onClick={handleCreateInstance} disabled={loading}>
+              <Button onClick={handleCreateInstance} disabled={loading || !canCreateConn} title={!canCreateConn ? formatUsageTooltip(connectionUsage?.current, connectionUsage?.max) : undefined}>
                 {loading ? "Criando..." : "Criar Instância"}
               </Button>
             </DialogFooter>
@@ -295,6 +353,8 @@ export default function WhatsAppConnections() {
         </Dialog>
       </div>
 
+      {/* Banner de quota bloqueada em nível de página */}
+      <GatingBanner resourceQuotaBlocked={!quotasLoading && !canCreateConn} resourceUsage={connectionUsage} resourceLabel="Conexões" messagesFeatureBlocked={messagesFeatureBlocked} rateLimitedNow={Boolean(sendRateStatus?.isLimited)} nextAllowedTime={sendRateStatus?.nextAllowedTime} rateTimeMode="relative" />
       <Tabs defaultValue="instances" className="space-y-4">
         <TabsList>
           <TabsTrigger value="instances">Instâncias</TabsTrigger>
@@ -306,6 +366,7 @@ export default function WhatsAppConnections() {
         </TabsList>
 
         <TabsContent value="instances" className="space-y-4">
+          {/* Banner de quota bloqueada */}
           {/* Barra de busca e ações */}
           <div className="flex items-center gap-4">
             <div className="relative flex-1">
@@ -338,7 +399,7 @@ export default function WhatsAppConnections() {
                       }
                     </p>
                     {!searchTerm && (
-                      <Button onClick={() => setIsCreateDialogOpen(true)}>
+                      <Button onClick={() => setIsCreateDialogOpen(true)} disabled={!canCreateConn} title={!canCreateConn ? formatUsageTooltip(connectionUsage?.current, connectionUsage?.max) : undefined}>
                         <Plus className="w-4 h-4 mr-2" />
                         Criar Primeira Instância
                       </Button>
@@ -390,6 +451,22 @@ export default function WhatsAppConnections() {
                              instance.status === 'connecting' ? 'Verificando' : 'Offline'}
                           </span>
                         </div>
+                        {/* Indicador compacto de Rate Limit */}
+                        {(() => {
+                          const s = getRateStatus('instance', instance.id);
+                          if (!s) return null;
+                          return (
+                            <div className="flex items-center gap-2 text-xs ml-2">
+                              <span className={`inline-flex items-center gap-1 ${s.isLimited ? 'text-red-600' : 'text-emerald-600'}`}>
+                                <span className={`w-2 h-2 rounded-full ${s.isLimited ? 'bg-red-500' : 'bg-emerald-500'}`} />
+                                {s.isLimited ? 'Rate limit ativo' : 'Rate limit OK'}
+                              </span>
+                              <span className="text-muted-foreground">
+                                Min {s.messagesThisMinute}/{s.minuteLimit} • Hora {s.messagesThisHour}/{s.hourLimit} • Dia {s.messagesThisDay}/{s.dayLimit}
+                              </span>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   </CardHeader>
@@ -513,7 +590,8 @@ export default function WhatsAppConnections() {
                           </Button>
                           <Button 
                             onClick={() => handleOpenSendDialog(instance)}
-                            disabled={loading}
+                            disabled={loading || messagesFeatureBlocked || !canSendRate('instance', instance.id)}
+                            title={messagesFeatureBlocked ? 'Envio de mensagens indisponível no seu plano' : (!canSendRate('instance', instance.id) ? 'Limite de envio atingido' : undefined)}
                             className="flex-1"
                           >
                             <Send className="w-4 h-4 mr-2" />
@@ -584,6 +662,16 @@ export default function WhatsAppConnections() {
         </TabsContent>
 
         <TabsContent value="settings" className="space-y-4">
+          {/* Quota banner also in settings tab */}
+          {!canCreateConn && (
+            <div className="rounded-md border border-red-300 bg-red-50 text-red-700 p-3 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium">Limite de conexões atingido</p>
+                <p className="text-xs">Você já utiliza {connectionUsage?.current ?? 0} de {connectionUsage?.max ?? 0} conexões. Exclua uma instância ou faça upgrade do plano.</p>
+              </div>
+            </div>
+          )}
           <Card>
             <CardHeader>
               <CardTitle>Configurações da Evolution API</CardTitle>
@@ -602,6 +690,9 @@ export default function WhatsAppConnections() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Configuração de Rate Limit */}
+          <RateLimitConfigComponent instanceId={selectedLive?.id ?? undefined} />
         </TabsContent>
       </Tabs>
 
@@ -658,6 +749,37 @@ export default function WhatsAppConnections() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            {/* Banner de bloqueio por plano */}
+            {messagesFeatureBlocked && (
+              <div className="rounded-md border border-yellow-300 bg-yellow-50 text-yellow-700 p-3 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium">Envio de mensagens indisponível</p>
+                  <p className="text-xs">Seu plano atual não permite o envio de mensagens. Faça upgrade para liberar este recurso.</p>
+                </div>
+              </div>
+            )}
+            {/* Rate limit banner when blocked */}
+            {!rateLimitLoading && sendRateStatus?.isLimited && !messagesFeatureBlocked && (
+              <div className="rounded-md border border-yellow-300 bg-yellow-50 text-yellow-700 p-3 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium">Limite de envio atingido</p>
+                  <p className="text-xs">
+                    {sendRateStatus.limitType === 'minute' ? 'Limite por minuto atingido.' :
+                     sendRateStatus.limitType === 'hour' ? 'Limite por hora atingido.' :
+                     sendRateStatus.limitType === 'day' ? 'Limite diário atingido.' :
+                     sendRateStatus.limitType === 'burst' ? 'Limite de burst atingido.' :
+                     sendRateStatus.limitType === 'cooldown' ? 'Aguardando cooldown.' :
+                     sendRateStatus.limitType === 'time_restriction' ? 'Fora do horário permitido.' : 'Envio temporariamente bloqueado.'}
+                    {' '}Próximo envio permitido {sendRateStatus.nextAllowedTime ? `às ${sendRateStatus.nextAllowedTime.toLocaleTimeString('pt-BR')}` : 'em breve'}.
+                  </p>
+                  <p className="text-xs mt-1">
+                    Min: {sendRateStatus.messagesThisMinute}/{sendRateStatus.minuteLimit} • Hora: {sendRateStatus.messagesThisHour}/{sendRateStatus.hourLimit} • Dia: {sendRateStatus.messagesThisDay}/{sendRateStatus.dayLimit}
+                  </p>
+                </div>
+              </div>
+            )}
             <div>
               <Label htmlFor="toNumber">Número de destino</Label>
               <Input
@@ -665,6 +787,7 @@ export default function WhatsAppConnections() {
                 placeholder="Ex: 5511999999999"
                 value={sendToNumber}
                 onChange={(e) => setSendToNumber(e.target.value)}
+                disabled={messagesFeatureBlocked}
               />
             </div>
             <div>
@@ -675,14 +798,27 @@ export default function WhatsAppConnections() {
                 value={sendText}
                 onChange={(e) => setSendText(e.target.value)}
                 rows={5}
+                disabled={messagesFeatureBlocked}
               />
             </div>
+            {/* Remaining quota hint */}
+            {!rateLimitLoading && sendRateStatus && !messagesFeatureBlocked && (
+              <p className="text-xs text-muted-foreground">
+                Restante: Min {Math.max(0, sendRateStatus.minuteLimit - sendRateStatus.messagesThisMinute)} • Hora {Math.max(0, sendRateStatus.hourLimit - sendRateStatus.messagesThisHour)} • Dia {Math.max(0, sendRateStatus.dayLimit - sendRateStatus.messagesThisDay)}
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsSendDialogOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={handleSendMessage} disabled={isSending || !sendToNumber.trim() || !sendText.trim()}>
+            <Button onClick={handleSendMessage} disabled={isSending || messagesFeatureBlocked || !sendToNumber.trim() || !sendText.trim() || (!rateLimitLoading && sendRateStatus?.isLimited)} title={
+              messagesFeatureBlocked
+                ? 'Envio de mensagens indisponível no seu plano'
+                : (!rateLimitLoading && sendRateStatus?.isLimited
+                    ? `Limite de envio atingido (liberado ${formatRelativeTime(sendRateStatus?.nextAllowedTime)})`
+                    : undefined)
+            }>
               {isSending ? (
                 <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
               ) : (

@@ -30,6 +30,8 @@ import { AdminOnly } from '@/components/RoleGuard';
 import { QuotaProgressGrid } from '@/components/ui/quota-progress';
 import { QuotaAlertList, QuotaCriticalBanner } from '@/components/ui/quota-alert';
 import { toast } from 'sonner';
+import { useRoleContext } from '@/contexts/RoleContext';
+import { QuotaAlertsManager } from '@/components/QuotaAlertsManager';
 
 interface QuotaLimitsForm {
   max_users: number;
@@ -51,6 +53,7 @@ const QuotaManagement: React.FC = () => {
     acknowledgeAlert,
     refreshQuota 
   } = useQuotas();
+  const { logAction } = useRoleContext();
 
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setSaving] = useState(false);
@@ -85,9 +88,13 @@ const QuotaManagement: React.FC = () => {
       await updateQuotaLimits(formData);
       setIsEditing(false);
       toast.success('Limites de quota atualizados com sucesso!');
-    } catch (error) {
+      // Auditoria cliente
+      logAction('update_quota_limits', 'quotas', { tenantId: currentTenant?.id, ...formData, result: 'success' }).catch(() => {});
+    } catch (error: any) {
       console.error('Erro ao atualizar quotas:', error);
       toast.error('Erro ao atualizar limites de quota');
+      // Auditoria cliente (erro)
+      logAction('update_quota_limits', 'quotas', { tenantId: currentTenant?.id, ...formData, result: 'error', error: String(error?.message || error) }).catch(() => {});
     } finally {
       setSaving(false);
     }
@@ -105,14 +112,20 @@ const QuotaManagement: React.FC = () => {
       });
     }
     setIsEditing(false);
+    // Auditoria cliente
+    logAction('cancel_quota_edit', 'quotas', { tenantId: currentTenant?.id }).catch(() => {});
   };
 
   const handleRefresh = async () => {
     try {
       await refreshQuota();
       toast.success('Dados de quota atualizados!');
-    } catch (error) {
+      // Auditoria cliente
+      logAction('refresh_quota', 'quotas', { tenantId: currentTenant?.id, result: 'success' }).catch(() => {});
+    } catch (error: any) {
       toast.error('Erro ao atualizar dados');
+      // Auditoria cliente (erro)
+      logAction('refresh_quota', 'quotas', { tenantId: currentTenant?.id, result: 'error', error: String(error?.message || error) }).catch(() => {});
     }
   };
 
@@ -120,8 +133,12 @@ const QuotaManagement: React.FC = () => {
     try {
       await acknowledgeAlert(alertId);
       toast.success('Alerta reconhecido');
-    } catch (error) {
+      // Auditoria cliente
+      logAction('acknowledge_quota_alert', 'quotas', { tenantId: currentTenant?.id, alertId, result: 'success' }).catch(() => {});
+    } catch (error: any) {
       toast.error('Erro ao reconhecer alerta');
+      // Auditoria cliente (erro)
+      logAction('acknowledge_quota_alert', 'quotas', { tenantId: currentTenant?.id, alertId, result: 'error', error: String(error?.message || error) }).catch(() => {});
     }
   };
 
@@ -167,6 +184,7 @@ const QuotaManagement: React.FC = () => {
   return (
     <AdminOnly>
       <div className="container mx-auto p-6 space-y-6">
+      <QuotaAlertsManager autoAcknowledge={false} />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

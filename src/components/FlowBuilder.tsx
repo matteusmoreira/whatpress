@@ -37,6 +37,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { AutomationAction, AutomationCondition } from '@/hooks/useAutomations'
+import { useQuotas } from '@/hooks/useQuotas'
 
 interface FlowNode {
   id: string
@@ -67,6 +68,8 @@ export default function FlowBuilder({ actions, conditions = [], onChange, classN
   const [selectedNode, setSelectedNode] = useState<FlowNode | null>(null)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [editingAction, setEditingAction] = useState<AutomationAction | null>(null)
+const { isFeatureBlocked } = useQuotas()
+const messagesFeatureBlocked = isFeatureBlocked('messages')
 
   // Inicializar nodes baseado nas actions
   React.useEffect(() => {
@@ -207,6 +210,8 @@ export default function FlowBuilder({ actions, conditions = [], onChange, classN
               size="sm"
               onClick={() => addAction(actionType.id)}
               className="gap-2"
+              disabled={actionType.id === 'send_message' && messagesFeatureBlocked}
+              title={actionType.id === 'send_message' && messagesFeatureBlocked ? 'Recurso de mensagens indisponível no seu plano' : undefined}
             >
               <actionType.icon className="h-4 w-4" />
               {actionType.name}
@@ -216,6 +221,11 @@ export default function FlowBuilder({ actions, conditions = [], onChange, classN
       </div>
 
       {/* Flow Canvas */}
+      {messagesFeatureBlocked && (
+        <div className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm">
+          Envio de mensagens está bloqueado no seu plano. O bloco "Enviar Mensagem" ficará indisponível.
+        </div>
+      )}
       <div className="min-h-[400px] border-2 border-dashed border-gray-200 rounded-lg p-4 bg-gray-50/50">
         {nodes.length === 0 ? (
           <div className="flex items-center justify-center h-64 text-gray-500">
@@ -298,6 +308,11 @@ export default function FlowBuilder({ actions, conditions = [], onChange, classN
             <div className="space-y-4">
               {editingAction.type === 'send_message' && (
                 <div className="space-y-2">
+                  {messagesFeatureBlocked && (
+                    <div className="rounded-md border border-yellow-300 bg-yellow-50 p-2 text-sm">
+                      O envio de mensagens está bloqueado no seu plano. Você pode configurar o conteúdo, mas os envios serão bloqueados até fazer upgrade.
+                    </div>
+                  )}
                   <Label htmlFor="message-content">Mensagem</Label>
                   <Textarea
                     id="message-content"

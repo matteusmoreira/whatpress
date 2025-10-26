@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { 
   Crown,
@@ -59,14 +59,14 @@ export default function SuperAdminLayout() {
           {/* Navigation */}
           <nav className="flex-1 px-4 py-6 space-y-2">
             {navigation.map((item) => (
-              <a
+              <Link
                 key={item.name}
-                href={item.href}
+                to={item.href}
                 className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
               >
                 <item.icon className="h-5 w-5" />
                 {item.name}
-              </a>
+              </Link>
             ))}
           </nav>
 

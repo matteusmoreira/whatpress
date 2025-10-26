@@ -41,7 +41,8 @@ import {
   RefreshCw,
   CheckCheck,
   Download,
-  Calendar
+  Calendar,
+  AlertCircle
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/hooks/use-toast'
@@ -51,6 +52,11 @@ import { useMessages } from '@/hooks/useMessages'
 import { MediaUpload, BulkMessageDialog } from '@/components/MediaUpload'
 import { MediaFile } from '@/hooks/useMessages'
 import { useTenant } from '@/hooks/useTenant'
+import { useRateLimit } from '@/hooks/useRateLimit'
+import { useQuotas } from '@/hooks/useQuotas'
+import { QuotaAlertsManager } from '@/components/QuotaAlertsManager'
+import { GatingBanner } from '@/components/GatingBanner'
+import { formatRelativeTime } from '@/lib/utils'
 
 interface Message {
   id: string
@@ -93,6 +99,55 @@ export default function Messages() {
   const { user } = useAuth()
   const { toast } = useToast()
   const { currentTenant } = useTenant()
+  const { canSendMessage: canSendRate, getStatus: getRateStatus, getNextAllowedTime, recordMessageSent, isLoading: rateLimitLoading } = useRateLimit()
+  const { isFeatureBlocked, getResourceUsage } = useQuotas()
+  const messagesFeatureBlocked = isFeatureBlocked('messages')
+  const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null)
+  const sendRateStatus = getRateStatus('instance', activeInstanceId || undefined) || getRateStatus('global')
+  const campaignsUsage = getResourceUsage('campaigns')
+  const criticalState = (campaignsUsage as any)?.status === 'critical'
+  const rateLimitedNow = !rateLimitLoading && sendRateStatus?.isLimited
+  const nextAllowedTime = sendRateStatus?.nextAllowedTime
+
+  // Detectar instância ativa conectada para exibir banner de rate limit
+  useEffect(() => {
+    const detectActiveInstance = async () => {
+      try {
+        let instance: { id: string } | null = null
+        if (currentTenant?.id) {
+          const { data: instances, error: instError } = await supabase
+            .from('whatsapp_instances')
+            .select('id, status')
+            .eq('tenant_id', currentTenant.id)
+            .eq('status', 'connected')
+            .limit(1)
+          if (instError || !instances || instances.length === 0) {
+            const { data: fallbackInstances } = await supabase
+              .from('whatsapp_instances')
+              .select('id, status')
+              .eq('user_id', user?.id)
+              .eq('status', 'connected')
+              .limit(1)
+            instance = fallbackInstances?.[0] || null
+          } else {
+            instance = instances[0]
+          }
+        } else if (user?.id) {
+          const { data: instances } = await supabase
+            .from('whatsapp_instances')
+            .select('id, status')
+            .eq('user_id', user.id)
+            .eq('status', 'connected')
+            .limit(1)
+          instance = instances?.[0] || null
+        }
+        setActiveInstanceId(instance?.id || null)
+      } catch (err) {
+        console.error('Erro ao detectar instância ativa:', err)
+      }
+    }
+    detectActiveInstance()
+  }, [currentTenant?.id, user?.id])
 
   // Auto scroll para última mensagem
   useEffect(() => {
@@ -252,101 +307,119 @@ export default function Messages() {
   const handleSendMessage = async () => {
     if (!messageText.trim() || !selectedContact || !user) return
 
-    try {
-      setSending(true)
+    // Checagem de feature de mensagens bloqueada por plano
+    if (messagesFeatureBlocked) {
+      toast({
+        title: 'Envio de mensagens indisponível',
+        description: 'Seu plano atual não permite o envio de mensagens. Faça upgrade para liberar este recurso.',
+        variant: 'destructive',
+      })
+      return
+    }
 
-      // Buscar instância ativa (preferir tenant)
-      let instance: any = null
+    // Checagem de rate limit antes de iniciar envio
+    if (!rateLimitLoading) {
+      const preStatus = getRateStatus('instance', activeInstanceId || undefined) || getRateStatus('global')
+      if (preStatus?.isLimited) {
+        toast({
+          title: 'Limite de envio atingido',
+          description: preStatus.nextAllowedTime ? `Aguarde até ${preStatus.nextAllowedTime.toLocaleTimeString('pt-BR')} para enviar novamente.` : 'Envio temporariamente bloqueado.',
+          variant: 'destructive',
+        })
+        return
+      }
+    }
+
+    setSending(true)
+
+    try {
+      // Localizar instância conectada
+      let instance: { id: string } | null = null
       if (currentTenant?.id) {
-        const { data: instances, error: instanceError } = await supabase
+        const { data: instances, error: instError } = await supabase
           .from('whatsapp_instances')
-          .select('*')
+          .select('id, status')
           .eq('tenant_id', currentTenant.id)
           .eq('status', 'connected')
           .limit(1)
-
-        if (instanceError) {
-          const fb = await supabase
+        if (instError || !instances || instances.length === 0) {
+          const { data: fallbackInstances } = await supabase
             .from('whatsapp_instances')
-            .select('*')
+            .select('id, status')
             .eq('user_id', user.id)
             .eq('status', 'connected')
             .limit(1)
-          if (fb.error) throw fb.error
-          instance = fb.data?.[0]
+          instance = fallbackInstances?.[0] || null
         } else {
-          instance = instances?.[0]
+          instance = instances[0]
         }
       } else {
-        const { data: instances, error: instanceError } = await supabase
+        const { data: instances } = await supabase
           .from('whatsapp_instances')
-          .select('*')
+          .select('id, status')
           .eq('user_id', user.id)
           .eq('status', 'connected')
           .limit(1)
-        if (instanceError) throw instanceError
-        instance = instances?.[0]
+        instance = instances?.[0] || null
       }
 
       if (!instance) {
         toast({
-          title: "Nenhuma instância conectada",
-          description: "Conecte uma instância do WhatsApp primeiro",
-          variant: "destructive",
+          title: 'Nenhuma instância conectada',
+          description: 'Conecte uma instância do WhatsApp para enviar mensagens.',
+          variant: 'destructive',
         })
         return
       }
 
-      // Enviar mensagem via Evolution API
-      const response = await fetch(`${import.meta.env.VITE_EVOLUTION_API_URL}/message/sendText/${instance.api_key}`, {
+      // Checagem de rate limit com instância definida
+      const rateStatus = getRateStatus('instance', instance.id) || getRateStatus('global')
+      if (!canSendRate('instance', instance.id) && rateStatus) {
+        toast({
+          title: 'Limite de envio atingido',
+          description: rateStatus.nextAllowedTime ? `Aguarde até ${rateStatus.nextAllowedTime.toLocaleTimeString('pt-BR')} para enviar novamente.` : 'Envio temporariamente bloqueado.',
+          variant: 'destructive',
+        })
+        return
+      }
+
+      // Enviar via Evolution API
+      const response = await fetch(`${import.meta.env.VITE_EVOLUTION_API_URL}/message/sendText/${instance.id}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'apikey': import.meta.env.VITE_EVOLUTION_API_KEY
+          'apikey': import.meta.env.VITE_EVOLUTION_API_KEY || '',
         },
         body: JSON.stringify({
-          number: selectedContact,
-          text: messageText
-        })
+          chatId: selectedContact.phone,
+          content: messageText,
+        }),
       })
 
       if (!response.ok) {
-        throw new Error('Falha ao enviar mensagem')
+        throw new Error('Falha ao enviar a mensagem pela Evolution API')
       }
 
       // Salvar mensagem no banco
-      const { error: messageError } = await supabase
-        .from('messages')
-        .insert([
-          {
-            instance_id: instance.id,
-            message_id: `sent_${Date.now()}`,
-            from_number: instance.phone_number || instance.name,
-            to_number: selectedContact,
-            content: messageText,
-            message_type: 'text',
-            is_from_me: true,
-            timestamp: new Date().toISOString(),
-            status: 'sent'
-          }
-        ])
+      const { error: dbError } = await supabase.from('messages').insert({
+        tenant_id: currentTenant?.id,
+        user_id: user.id,
+        contact_id: selectedContact.id,
+        message_text: messageText,
+        status: 'sent',
+      })
 
-      if (messageError) throw messageError
+      if (dbError) throw dbError
 
+      // Atualizar contadores de rate limit
+      await recordMessageSent('instance', instance.id, true)
+
+      // Atualizar UI
       setMessageText('')
-      await loadData() // Recarregar dados
-      
-      toast({
-        title: "Mensagem enviada",
-        description: "Sua mensagem foi enviada com sucesso",
-      })
+      toast({ title: 'Mensagem enviada!' })
     } catch (error) {
-      console.error('Erro ao enviar mensagem:', error)
-      toast({
-        title: "Erro ao enviar",
-        description: "Não foi possível enviar a mensagem",
-        variant: "destructive",
-      })
+      console.error(error)
+      toast({ title: 'Erro ao enviar mensagem', variant: 'destructive' })
     } finally {
       setSending(false)
     }
@@ -409,6 +482,17 @@ export default function Messages() {
           </Button>
         </div>
       </div>
+
+      <QuotaAlertsManager showCriticalToast usage={campaignsUsage} resourceLabel="campanhas" autoAcknowledge />
+      <GatingBanner
+        campaignsQuotaBlocked={Boolean(campaignsUsage && campaignsUsage.current >= campaignsUsage.max)}
+        messagesFeatureBlocked={messagesFeatureBlocked}
+        rateLimitedNow={rateLimitedNow}
+        criticalState={criticalState}
+        campaignsUsage={campaignsUsage as any}
+        nextAllowedTime={nextAllowedTime as any}
+        rateTimeMode="relative"
+      />
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Lista de Conversas */}
@@ -594,6 +678,31 @@ export default function Messages() {
 
               {/* Input de Mensagem */}
               <div className="p-4 border-t">
+                {/* Banner de feature bloqueada por plano */}
+                {messagesFeatureBlocked && (
+                  <div className="rounded-md border border-yellow-300 bg-yellow-50 text-yellow-700 p-3 mb-2 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium">Envio de mensagens indisponível</p>
+                      <p className="text-xs">Seu plano atual não permite o envio de mensagens. Faça upgrade para liberar este recurso.</p>
+                    </div>
+                  </div>
+                )}
+                {/* Banner de rate limit quando bloqueado */}
+                {!rateLimitLoading && sendRateStatus?.isLimited && !messagesFeatureBlocked && (
+                  <div className="rounded-md border border-yellow-300 bg-yellow-50 text-yellow-700 p-3 mb-2 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium">Limite de envio atingido</p>
+                      <p className="text-xs">
+                        Próximo envio permitido {sendRateStatus.nextAllowedTime ? `às ${sendRateStatus.nextAllowedTime.toLocaleTimeString('pt-BR')}` : 'em breve'}.
+                      </p>
+                      <p className="text-xs mt-1">
+                        Min: {sendRateStatus.messagesThisMinute}/{sendRateStatus.minuteLimit} • Hora: {sendRateStatus.messagesThisHour}/{sendRateStatus.hourLimit} • Dia: {sendRateStatus.messagesThisDay}/{sendRateStatus.dayLimit}
+                      </p>
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center space-x-2">
                   <Button variant="ghost" size="sm">
                     <Paperclip className="w-4 h-4" />
@@ -612,13 +721,21 @@ export default function Messages() {
                   </Button>
                   <Button 
                     onClick={handleSendMessage}
-                    disabled={!messageText.trim() || sending}
+                    disabled={!messageText.trim() || sending || (!rateLimitLoading && sendRateStatus?.isLimited)}
+                    title={
+                      messagesFeatureBlocked
+                        ? 'Envio de mensagens indisponível no seu plano'
+                        : (!rateLimitLoading && sendRateStatus?.isLimited
+                            ? `Limite de envio atingido (liberado ${formatRelativeTime(sendRateStatus?.nextAllowedTime)})`
+                            : undefined)
+                    }
                   >
                     {sending ? (
                       <RefreshCw className="w-4 h-4 animate-spin" />
                     ) : (
                       <Send className="w-4 h-4" />
                     )}
+                    Enviar
                   </Button>
                 </div>
               </div>

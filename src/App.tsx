@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { ThemeProvider } from '@/components/theme-provider'
 import LandingPage from '@/pages/Landing'
 import LoginPage from '@/pages/Login'
@@ -22,13 +22,19 @@ import MessagesPage from './pages/Messages'
 import SettingsPage from './pages/Settings'
 import SupportPage from './pages/Support'
 import QuotaManagementPage from './pages/QuotaManagement'
-import { RoleManagement } from './pages/RoleManagement'
+import { Suspense, lazy } from 'react'
+import NotFoundPage from '@/pages/NotFound'
+import DevErrorPage from '@/pages/DevError'
+const RoleManagementPage = lazy(() => import('./pages/RoleManagement').then(m => ({ default: m.RoleManagement })))
+// RoleManagement page is lazy-loaded below
 import RequireAuth from '@/components/auth/RequireAuth'
 import './App.css'
 import { Toaster } from '@/components/ui/toaster'
 import { isSupabaseConfigured } from '@/lib/supabase'
 import { AdminOnly, SuperAdminOnly } from '@/components/RoleGuard'
 import UnauthorizedPage from '@/pages/Unauthorized'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
+import OfflineBanner from '@/components/OfflineBanner'
 
 function App() {
   return (
@@ -38,52 +44,62 @@ function App() {
           Supabase não está configurado. Algumas funcionalidades podem ficar indisponíveis. Consulte o arquivo <span className="font-medium">docs/supabase-setup.md</span> no repositório.
         </div>
       )}
-      <Router
-        future={{
-          v7_startTransition: true,
-          v7_relativeSplatPath: true,
-        }}
-      >
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/dashboard" element={
-            <RequireAuth>
-              <DashboardLayout />
-            </RequireAuth>
-          }>
-            <Route index element={<DashboardPage />} />
-            <Route path="contacts" element={<ContactsPage />} />
-            <Route path="campaigns" element={<CampaignsPage />} />
-            <Route path="campaigns/create" element={<CreateCampaignPage />} />
-            <Route path="analytics" element={<AnalyticsPage />} />
-            <Route path="automation" element={<AutomationPage />} />
-            <Route path="automation/flow/:id" element={<FlowBuilderPage />} />
-            <Route path="whatsapp-integration" element={<WhatsAppIntegrationPage />} />
-            <Route path="whatsapp" element={<WhatsAppConnectionsPage />} />
-            <Route path="templates" element={<TemplatesPage />} />
-            <Route path="scheduling" element={<SchedulingPage />} />
-            <Route path="messages" element={<MessagesPage />} />
-            <Route path="notifications" element={<NotificationsPage />} />
-            <Route path="quotas" element={<AdminOnly redirectTo="/unauthorized" showError={false}><QuotaManagementPage /></AdminOnly>} />
-            <Route path="roles" element={<AdminOnly redirectTo="/unauthorized" showError={false}><RoleManagement /></AdminOnly>} />
-            <Route path="settings" element={<SettingsPage />} />
-            <Route path="support" element={<SupportPage />} />
-          </Route>
-          <Route path="/superadmin" element={
-            <RequireAuth>
-              <SuperAdminOnly redirectTo="/unauthorized" showError={false}>
-                <SuperAdminLayout />
-              </SuperAdminOnly>
-            </RequireAuth>
-          }>
-            <Route index element={<SuperAdminPage />} />
-          </Route>
-        <Route path="/unauthorized" element={<UnauthorizedPage />} />
-        </Routes>
-        <Toaster />
-      </Router>
+      <OfflineBanner />
+      <ErrorBoundary>
+        <Router
+          future={{
+            v7_startTransition: true,
+            v7_relativeSplatPath: true,
+          }}
+        >
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/dashboard" element={
+              <RequireAuth>
+                <DashboardLayout />
+              </RequireAuth>
+            }>
+              <Route index element={<DashboardPage />} />
+              <Route path="contacts" element={<ContactsPage />} />
+              <Route path="campaigns" element={<CampaignsPage />} />
+              <Route path="campaigns/create" element={<CreateCampaignPage />} />
+              <Route path="analytics" element={<AnalyticsPage />} />
+              <Route path="automation" element={<AutomationPage />} />
+              <Route path="automation/flow/:id" element={<FlowBuilderPage />} />
+              <Route path="whatsapp-integration" element={<WhatsAppIntegrationPage />} />
+              <Route path="whatsapp" element={<WhatsAppConnectionsPage />} />
+              <Route path="templates" element={<TemplatesPage />} />
+              <Route path="scheduling" element={<SchedulingPage />} />
+              <Route path="messages" element={<MessagesPage />} />
+              <Route path="notifications" element={<NotificationsPage />} />
+              <Route path="quotas" element={<AdminOnly redirectTo="/unauthorized" showError={false}><QuotaManagementPage /></AdminOnly>} />
+              <Route path="roles" element={<AdminOnly redirectTo="/unauthorized" showError={false}><Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Carregando...</div>}><RoleManagementPage /></Suspense></AdminOnly>} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="support" element={<SupportPage />} />
+            </Route>
+            <Route path="/superadmin" element={
+              <RequireAuth>
+                <SuperAdminOnly redirectTo="/unauthorized" showError={false}>
+                  <SuperAdminLayout />
+                </SuperAdminOnly>
+              </RequireAuth>
+            }>
+              <Route index element={<SuperAdminPage />} />
+              {/* Rota de teste de erro controlado (apenas SUPERADMIN) */}
+              <Route path="test-error" element={<DevErrorPage />} />
+            </Route>
+            <Route path="/unauthorized" element={<UnauthorizedPage />} />
+            {import.meta.env.DEV && (
+              <Route path="/dev/error" element={<DevErrorPage />} />
+            )}
+            {/* Catch-all para rotas desconhecidas */}
+            <Route path="*" element={<NotFoundPage />} />
+          </Routes>
+          <Toaster />
+        </Router>
+      </ErrorBoundary>
     </ThemeProvider>
   )
 }

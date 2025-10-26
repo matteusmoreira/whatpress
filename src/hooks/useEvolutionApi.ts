@@ -5,6 +5,9 @@ import { useToast } from '@/hooks/use-toast'
 import { supabase } from '@/lib/supabase'
 import { isTestEnv } from '@/lib/env'
 import { useTenant } from '@/hooks/useTenant'
+import { useQuotas } from '@/hooks/useQuotas'
+import { useRateLimit } from '@/hooks/useRateLimit'
+import { useRoleContext } from '@/contexts/RoleContext'
 
 export function useEvolutionApi() {
   const { toast } = useToast()
@@ -17,6 +20,11 @@ export function useEvolutionApi() {
   const pollingIntervalRef = useRef<number | null>(null)
   // Guarda códigos de pareamento por instância (não persistido no banco)
   const [pairingCodes, setPairingCodes] = useState<Record<string, string | undefined>>({})
+
+  // Quotas e rate limit
+  const { canCreateResource, getResourceUsage } = useQuotas()
+  const { canSendMessage: canSendRL, recordMessageSent, getNextAllowedTime } = useRateLimit()
+  const { logAction } = useRoleContext()
 
   const loadInstances = useCallback(async () => {
     setLoading(true)
@@ -37,6 +45,18 @@ export function useEvolutionApi() {
 
   const createInstance = useCallback(async (name: string, webhookUrl?: string) => {
     try {
+      // Enforce quota at API-level
+      const usage = getResourceUsage('connections')
+      if (!canCreateResource('connections')) {
+        toast({
+          title: 'Limite de conexões atingido',
+          description: `Você já tem ${usage?.current ?? 0}/${usage?.max ?? 0} conexões ativas no seu plano.`,
+          variant: 'destructive'
+        })
+        logAction('quota_block', 'connections', { action: 'create_instance', usage })
+        throw new Error('Limite de conexões do plano atingido')
+      }
+
       const instance = await whatsappInstanceService.createInstance({ name, webhook_url: webhookUrl }, currentTenant?.id)
       setInstances(prev => [instance, ...prev])
       toast({ title: 'Instância criada', description: `A instância "${instance.name}" foi criada.` })
@@ -45,7 +65,7 @@ export function useEvolutionApi() {
       toast({ title: 'Erro ao criar instância', description: error?.message, variant: 'destructive' })
       throw error
     }
-  }, [toast, currentTenant?.id])
+  }, [toast, currentTenant?.id, canCreateResource, getResourceUsage, logAction])
 
   const connect = useCallback(async (instanceId: string) => {
     try {
@@ -144,6 +164,21 @@ export function useEvolutionApi() {
         toast({ title: 'Instância não conectada', description: 'Conecte a instância antes de enviar mensagens.', variant: 'destructive' })
         return { success: false }
       }
+
+      // Rate limit enforcement (per instance)
+      const scope = 'instance'
+      const targetId = targetInstance.id
+      if (!canSendRL(scope, targetId)) {
+        const next = getNextAllowedTime(scope, targetId)
+        toast({
+          title: 'Limite de envio atingido',
+          description: next ? `Tente novamente em ${next.toLocaleTimeString()}` : 'Tente novamente mais tarde.',
+          variant: 'destructive'
+        })
+        logAction('rate_limit_block', 'messages', { instanceId: targetId, nextAllowedTime: next })
+        return { success: false }
+      }
+
       const instanceName = targetInstance.api_key || targetInstance.name
       const evolutionApi = new EvolutionApiService({
         baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
@@ -151,13 +186,18 @@ export function useEvolutionApi() {
         instanceName
       })
       await evolutionApi.sendTextMessage(toNumber, text)
+      // Record success for rate limiting
+      await recordMessageSent(scope, targetId, true)
       toast({ title: 'Mensagem enviada' })
+      logAction('message_sent', 'messages', { instanceId: targetId, to: toNumber, length: text?.length || 0 })
       return { success: true }
     } catch (error: any) {
+      // Record failure (may adjust adaptive rate)
+      try { await recordMessageSent('instance', targetInstance.id, false) } catch {}
       toast({ title: 'Erro ao enviar mensagem', description: error?.message, variant: 'destructive' })
       return { success: false }
     }
-  }, [toast])
+  }, [toast, canSendRL, getNextAllowedTime, recordMessageSent, logAction])
 
   // Adiciona função para buscar eventos recentes de uma instância
   // Retorna últimos N eventos da tabela webhook_events, filtrando por nome da instância (api_key ou name)

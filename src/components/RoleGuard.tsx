@@ -1,9 +1,10 @@
 import React, { useEffect } from 'react'
 import { useRoleContext } from '@/contexts/RoleContext'
- import { Alert, AlertDescription } from '@/components/ui/alert'
- import { ShieldX } from 'lucide-react'
- import { useLocation, useNavigate } from 'react-router-dom'
- import { useToast } from '@/hooks/use-toast'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { ShieldX } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { useToast } from '@/hooks/use-toast'
+import { RoleGuard as UIRoleGuard } from '@/components/ui/role-guard'
 
 interface RoleGuardProps {
   children: React.ReactNode
@@ -31,7 +32,7 @@ interface RoleGuardProps {
   redirectTo?: string
 }
 
-export const RoleGuard: React.FC<RoleGuardProps> = ({
+export const RoleGuardLegacy: React.FC<RoleGuardProps> = ({
   children,
   allowedRoles,
   resource,
@@ -132,15 +133,14 @@ export const SuperAdminOnly: React.FC<{
   showError?: boolean
   redirectTo?: string
 }> = ({ children, fallback, showError = true, redirectTo }) => (
-  <RoleGuard 
-    allowedRoles={['SUPERADMIN']} 
+  <UIRoleGuard 
+    requiredRole="SUPERADMIN" 
     fallback={fallback}
-    showError={showError}
-    errorMessage="Apenas Super Administradores podem acessar este recurso."
+    showFallback={showError}
     redirectTo={redirectTo}
   >
     {children}
-  </RoleGuard>
+  </UIRoleGuard>
 )
 
 export const AdminOnly: React.FC<{
@@ -149,15 +149,14 @@ export const AdminOnly: React.FC<{
   showError?: boolean
   redirectTo?: string
 }> = ({ children, fallback, showError = true, redirectTo }) => (
-  <RoleGuard 
-    allowedRoles={['SUPERADMIN', 'ADMIN']} 
+  <UIRoleGuard 
+    requiredRole="ADMIN" 
     fallback={fallback}
-    showError={showError}
-    errorMessage="Apenas Administradores podem acessar este recurso."
+    showFallback={showError}
     redirectTo={redirectTo}
   >
     {children}
-  </RoleGuard>
+  </UIRoleGuard>
 )
 
 export const AuthenticatedOnly: React.FC<{
@@ -166,15 +165,15 @@ export const AuthenticatedOnly: React.FC<{
   showError?: boolean
   redirectTo?: string
 }> = ({ children, fallback, showError = true, redirectTo }) => (
-  <RoleGuard 
-    allowedRoles={['SUPERADMIN', 'ADMIN', 'USER']} 
+  <UIRoleGuard 
+    requiredRole="USER" 
     fallback={fallback}
-    showError={showError}
-    errorMessage="Você precisa estar logado para acessar este recurso."
+    showFallback={showError}
     redirectTo={redirectTo}
   >
     {children}
-  </RoleGuard>
+  </UIRoleGuard>
 )
 
-// useRoleGuard foi movido para '@/components/ui/role-guard.tsx' para evitar avisos de HMR do Vite ao misturar exports de componentes e hooks no mesmo arquivo.
+// Re-exportar RoleGuard unificado para manter compatibilidade de import
+export { UIRoleGuard as RoleGuard }

@@ -1,3 +1,43 @@
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImwrYU13Y0NwdkUzZGVpeWQiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL3FhZmdoZnBtanZyZmx0cHByc3NiLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJjZjBjYjIyMS02YzBiLTQ5N2QtYjg2Yy0yZWY1ZWFhNDQ1ZDciLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzYxMTU0NDQwLCJpYXQiOjE3NjExNTA4NDAsImVtYWlsIjoidGVuYW50LmFkbWluLnRlc3RAZXhhbXBsZS5jb20iLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImVtYWlsX3ZlcmlmaWVkIjp0cnVlfSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc2MTE1MDg0MH1dLCJzZXNzaW9uX2lkIjoiNThiYzEzNzEtOTM5Yi00MDYyLWEzNDQtMjk1NDY4NzJhMzIzIiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.Iy7NdtROp_7THUpHjErDGSgV0s5Dy4NA35cWkA9vmZE"
+  "access_token": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImwrYU13Y0NwdkUzZGVpeWQiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL3FhZmdoZnBtanZyZmx0cHByc3NiLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiI3MTZlYzc2NS1hNjQzLTRiOWUtOTU0Mi1mNTQyMDkxMmQ0MmMiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzYxNDQxNTYwLCJpYXQiOjE3NjE0Mzc5NjAsImVtYWlsIjoiYWRtaW4tbm9ybWFsQGxvY2FsLnRlc3QiLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImVtYWlsX3ZlcmlmaWVkIjp0cnVlfSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc2MTQzNzk2MH1dLCJzZXNzaW9uX2lkIjoiOTY1ZjBmMTgtZjdmZS00ZTA3LTgwZGEtMzQzZTFlMTkyYTUwIiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.YvmB3rY3iWgZDP-rXp9ZVi2_M4Q9u87-q3crPzDDIXk",
+  "user": {
+    "id": "716ec765-a643-4b9e-9542-f5420912d42c",
+    "aud": "authenticated",
+    "role": "authenticated",
+    "email": "admin-normal@local.test",
+    "email_confirmed_at": "2025-10-26T00:19:07.81536Z",
+    "phone": "",
+    "confirmed_at": "2025-10-26T00:19:07.81536Z",
+    "last_sign_in_at": "2025-10-26T00:19:20.376895577Z",
+    "app_metadata": {
+      "provider": "email",
+      "providers": [
+        "email"
+      ]
+    },
+    "user_metadata": {
+      "email_verified": true
+    },
+    "identities": [
+      {
+        "identity_id": "ca00fa33-fbb4-49ee-b6a4-b608a4db9de7",
+        "id": "716ec765-a643-4b9e-9542-f5420912d42c",
+        "user_id": "716ec765-a643-4b9e-9542-f5420912d42c",
+        "identity_data": {
+          "email": "admin-normal@local.test",
+          "email_verified": false,
+          "phone_verified": false,
+          "sub": "716ec765-a643-4b9e-9542-f5420912d42c"
+        },
+        "provider": "email",
+        "last_sign_in_at": "2025-10-26T00:19:07.794147Z",
+        "created_at": "2025-10-26T00:19:07.794874Z",
+        "updated_at": "2025-10-26T00:19:07.794874Z",
+        "email": "admin-normal@local.test"
+      }
+    ],
+    "created_at": "2025-10-26T00:19:07.753979Z",
+    "updated_at": "2025-10-26T00:19:20.397525Z",
+    "is_anonymous": false
+  }
 }

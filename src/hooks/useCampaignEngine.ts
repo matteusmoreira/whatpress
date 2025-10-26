@@ -428,7 +428,23 @@ export const useCampaignEngine = (): UseCampaignEngineReturn => {
             ? item.message_content
             : (item.message_content?.text ?? JSON.stringify(item.message_content));
 
-          await evolution.sendTextMessage(item.contact_id, textPayload);
+          // Resolve recipient phone number from contacts if contact_id is a UUID
+          let recipientNumber = item.contact_id;
+          try {
+            const { data: contactRow } = await supabase
+              .from('contacts')
+              .select('phone_number')
+              .eq('id', item.contact_id)
+              .limit(1)
+              .single();
+            if (contactRow?.phone_number) {
+              recipientNumber = contactRow.phone_number;
+            }
+          } catch (lookupErr) {
+            console.warn('Falha ao resolver número do contato, usando contact_id como fallback:', lookupErr);
+          }
+
+          await evolution.sendTextMessage(recipientNumber, textPayload);
 
           // Atualizações pós-envio
           await supabase

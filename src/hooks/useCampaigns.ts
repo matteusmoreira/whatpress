@@ -17,6 +17,7 @@ export interface Campaign {
   scheduled_at: string | null
   created_at: string
   completed_at: string | null
+  execution_strategy?: any
   // Campos calculados
   sent?: number
   delivered?: number

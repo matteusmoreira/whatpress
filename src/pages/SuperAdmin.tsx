@@ -44,6 +44,8 @@ import { QuotaGrid, QuotaProgress } from '@/components/ui/quota-progress'
 import { SuperAdminOnly } from '@/components/RoleGuard'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
+import { Resources, Actions } from '@/constants/permissions'
+import { useRoleContext } from '@/contexts/RoleContext'
 
 const mockStats = [
   {
@@ -89,10 +91,10 @@ interface TenantQuotaData {
 interface QuotaEditForm {
   max_users: number
   max_contacts: number
-  max_whatsapp_connections: number
+  max_connections: number
   max_message_templates: number
   max_automations: number
-  max_monthly_messages: number
+  max_messages_per_month: number
 }
 
 export default function SuperAdmin() {
@@ -104,14 +106,15 @@ export default function SuperAdmin() {
   const [quotaEditForm, setQuotaEditForm] = useState<QuotaEditForm>({
     max_users: 0,
     max_contacts: 0,
-    max_whatsapp_connections: 0,
+    max_connections: 0,
     max_message_templates: 0,
     max_automations: 0,
-    max_monthly_messages: 0
+    max_messages_per_month: 0
   })
   const [isQuotaDialogOpen, setIsQuotaDialogOpen] = useState(false)
 
   const { tenants, selectedTenantId, selectTenant, createTenant, loadMyTenants, loading, error } = useTenants()
+  const { logAction } = useRoleContext()
 
   // Carregar dados de quotas de todos os tenants
   const loadTenantsQuotaData = useCallback(async () => {
@@ -129,7 +132,7 @@ export default function SuperAdmin() {
       const { data: alertsData, error: alertsError } = await supabase
         .from('quota_alerts')
         .select('tenant_id, id')
-        .eq('is_read', false)
+        .eq('acknowledged', false)
 
       if (alertsError) throw alertsError
 
@@ -140,12 +143,12 @@ export default function SuperAdmin() {
 
       const processedData: TenantQuotaData[] = quotasData?.map((quota: any) => {
         const totalUsage = (
-          (quota.used_users / Math.max(quota.max_users, 1)) +
-          (quota.used_contacts / Math.max(quota.max_contacts, 1)) +
-          (quota.used_whatsapp_connections / Math.max(quota.max_whatsapp_connections, 1)) +
-          (quota.used_message_templates / Math.max(quota.max_message_templates, 1)) +
-          (quota.used_automations / Math.max(quota.max_automations, 1)) +
-          (quota.used_monthly_messages / Math.max(quota.max_monthly_messages, 1))
+          (quota.current_users / Math.max(quota.max_users, 1)) +
+          (quota.current_contacts / Math.max(quota.max_contacts, 1)) +
+          (quota.current_connections / Math.max(quota.max_connections, 1)) +
+          (quota.current_message_templates / Math.max(quota.max_message_templates, 1)) +
+          (quota.current_automations / Math.max(quota.max_automations, 1)) +
+          (quota.used_messages_current_month / Math.max(quota.max_messages_per_month, 1))
         ) / 6 * 100
 
         return {
@@ -160,13 +163,17 @@ export default function SuperAdmin() {
       }) || []
 
       setTenantsQuotaData(processedData)
+      // Auditoria cliente: visualizar quotas
+      logAction(Actions.VIEW_QUOTAS, Resources.QUOTAS, { tenants: processedData.length, source: 'SuperAdmin' }).catch(() => {})
     } catch (error: any) {
       console.error('Erro ao carregar dados de quotas:', error)
       toast.error('Erro ao carregar dados de quotas')
+      // Auditoria cliente: erro ao visualizar quotas
+      logAction(Actions.VIEW_QUOTAS, Resources.QUOTAS, { result: 'error', error: error?.message || 'unknown' }).catch(() => {})
     } finally {
       setQuotasLoading(false)
     }
-  }, [])
+  }, [logAction])
 
   // Atualizar quotas de um tenant
   const updateTenantQuotas = useCallback(async (tenantId: string, quotas: QuotaEditForm) => {
@@ -178,14 +185,19 @@ export default function SuperAdmin() {
 
       if (error) throw error
 
+      // Auditoria cliente: atualizar quotas
+      logAction(Actions.UPDATE_QUOTAS, Resources.QUOTAS, { tenantId, quotas, result: 'success' }).catch(() => {})
+
       toast.success('Quotas atualizadas com sucesso!')
       setIsQuotaDialogOpen(false)
       loadTenantsQuotaData()
     } catch (error: any) {
       console.error('Erro ao atualizar quotas:', error)
       toast.error('Erro ao atualizar quotas')
+      // Auditoria cliente: erro ao atualizar quotas
+      logAction(Actions.UPDATE_QUOTAS, Resources.QUOTAS, { tenantId, quotas, result: 'error', error: error?.message || 'unknown' }).catch(() => {})
     }
-  }, [loadTenantsQuotaData])
+  }, [loadTenantsQuotaData, logAction])
 
   // Abrir dialog de edição de quotas
   const openQuotaEditDialog = useCallback(async (tenantId: string) => {
@@ -195,10 +207,10 @@ export default function SuperAdmin() {
     setQuotaEditForm({
       max_users: tenantData.quotas.max_users,
       max_contacts: tenantData.quotas.max_contacts,
-      max_whatsapp_connections: tenantData.quotas.max_whatsapp_connections,
+      max_connections: tenantData.quotas.max_connections,
       max_message_templates: tenantData.quotas.max_message_templates,
       max_automations: tenantData.quotas.max_automations,
-      max_monthly_messages: tenantData.quotas.max_monthly_messages
+      max_messages_per_month: tenantData.quotas.max_messages_per_month
     })
     setSelectedTenantForQuota(tenantId)
     setIsQuotaDialogOpen(true)
@@ -210,31 +222,40 @@ export default function SuperAdmin() {
       starter: {
         max_users: 2,
         max_contacts: 1000,
-        max_whatsapp_connections: 1,
+        max_connections: 1,
         max_message_templates: 10,
         max_automations: 5,
-        max_monthly_messages: 5000
+        max_messages_per_month: 5000
       },
       pro: {
         max_users: 10,
         max_contacts: 10000,
-        max_whatsapp_connections: 5,
+        max_connections: 5,
         max_message_templates: 50,
         max_automations: 25,
-        max_monthly_messages: 50000
+        max_messages_per_month: 50000
       },
       enterprise: {
         max_users: -1, // Ilimitado
         max_contacts: -1,
-        max_whatsapp_connections: -1,
+        max_connections: -1,
         max_message_templates: -1,
         max_automations: -1,
-        max_monthly_messages: -1
+        max_messages_per_month: -1
       }
     }
 
-    await updateTenantQuotas(tenantId, defaultQuotas[plan])
-  }, [updateTenantQuotas])
+    try {
+      // Auditoria cliente: aplicar plano padrão (override quotas)
+      logAction(Actions.OVERRIDE_QUOTAS, Resources.QUOTAS, { tenantId, plan, quotas: defaultQuotas[plan], stage: 'attempt' }).catch(() => {})
+      await updateTenantQuotas(tenantId, defaultQuotas[plan])
+      logAction(Actions.OVERRIDE_QUOTAS, Resources.QUOTAS, { tenantId, plan, result: 'success' }).catch(() => {})
+    } catch (error: any) {
+      console.error('Erro ao aplicar plano padrão:', error)
+      toast.error('Erro ao aplicar plano padrão')
+      logAction(Actions.OVERRIDE_QUOTAS, Resources.QUOTAS, { tenantId, plan, result: 'error', error: error?.message || 'unknown' }).catch(() => {})
+    }
+  }, [updateTenantQuotas, logAction])
 
   useEffect(() => {
     loadTenantsQuotaData()
@@ -576,44 +597,44 @@ export default function SuperAdmin() {
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                           <QuotaProgress
                             title="Usuários"
-                            used={tenantData.quotas.used_users}
+                            used={tenantData.quotas.current_users}
                             max={tenantData.quotas.max_users}
-                            percentage={tenantData.quotas.max_users > 0 ? Math.round((tenantData.quotas.used_users / tenantData.quotas.max_users) * 100) : 0}
+                            percentage={tenantData.quotas.max_users > 0 ? Math.round((tenantData.quotas.current_users / tenantData.quotas.max_users) * 100) : 0}
                             type="users"
                           />
                           <QuotaProgress
                             title="Contatos"
-                            used={tenantData.quotas.used_contacts}
+                            used={tenantData.quotas.current_contacts}
                             max={tenantData.quotas.max_contacts}
-                            percentage={tenantData.quotas.max_contacts > 0 ? Math.round((tenantData.quotas.used_contacts / tenantData.quotas.max_contacts) * 100) : 0}
+                            percentage={tenantData.quotas.max_contacts > 0 ? Math.round((tenantData.quotas.current_contacts / tenantData.quotas.max_contacts) * 100) : 0}
                             type="contacts"
                           />
                           <QuotaProgress
                             title="Conexões WhatsApp"
-                            used={tenantData.quotas.used_whatsapp_connections}
-                            max={tenantData.quotas.max_whatsapp_connections}
-                            percentage={tenantData.quotas.max_whatsapp_connections > 0 ? Math.round((tenantData.quotas.used_whatsapp_connections / tenantData.quotas.max_whatsapp_connections) * 100) : 0}
+                            used={tenantData.quotas.current_connections}
+                            max={tenantData.quotas.max_connections}
+                            percentage={tenantData.quotas.max_connections > 0 ? Math.round((tenantData.quotas.current_connections / tenantData.quotas.max_connections) * 100) : 0}
                             type="connections"
                           />
                           <QuotaProgress
                             title="Templates"
-                            used={tenantData.quotas.used_message_templates}
+                            used={tenantData.quotas.current_message_templates}
                             max={tenantData.quotas.max_message_templates}
-                            percentage={tenantData.quotas.max_message_templates > 0 ? Math.round((tenantData.quotas.used_message_templates / tenantData.quotas.max_message_templates) * 100) : 0}
+                            percentage={tenantData.quotas.max_message_templates > 0 ? Math.round((tenantData.quotas.current_message_templates / tenantData.quotas.max_message_templates) * 100) : 0}
                             type="templates"
                           />
                           <QuotaProgress
                             title="Automações"
-                            used={tenantData.quotas.used_automations}
+                            used={tenantData.quotas.current_automations}
                             max={tenantData.quotas.max_automations}
-                            percentage={tenantData.quotas.max_automations > 0 ? Math.round((tenantData.quotas.used_automations / tenantData.quotas.max_automations) * 100) : 0}
+                            percentage={tenantData.quotas.max_automations > 0 ? Math.round((tenantData.quotas.current_automations / tenantData.quotas.max_automations) * 100) : 0}
                             type="automations"
                           />
                           <QuotaProgress
                             title="Mensagens/mês"
-                            used={tenantData.quotas.used_monthly_messages}
-                            max={tenantData.quotas.max_monthly_messages}
-                            percentage={tenantData.quotas.max_monthly_messages > 0 ? Math.round((tenantData.quotas.used_monthly_messages / tenantData.quotas.max_monthly_messages) * 100) : 0}
+                            used={tenantData.quotas.used_messages_current_month}
+                            max={tenantData.quotas.max_messages_per_month}
+                            percentage={tenantData.quotas.max_messages_per_month > 0 ? Math.round((tenantData.quotas.used_messages_current_month / tenantData.quotas.max_messages_per_month) * 100) : 0}
                             type="messages"
                           />
                         </div>
@@ -705,14 +726,14 @@ export default function SuperAdmin() {
             </div>
             
             <div className="space-y-2">
-              <Label htmlFor="max_whatsapp_connections">Conexões WhatsApp</Label>
+              <Label htmlFor="max_connections">Conexões WhatsApp</Label>
               <Input
-                id="max_whatsapp_connections"
+                id="max_connections"
                 type="number"
-                value={quotaEditForm.max_whatsapp_connections}
+                value={quotaEditForm.max_connections}
                 onChange={(e) => setQuotaEditForm(prev => ({
                   ...prev,
-                  max_whatsapp_connections: parseInt(e.target.value) || 0
+                  max_connections: parseInt(e.target.value) || 0
                 }))}
               />
             </div>
@@ -744,14 +765,14 @@ export default function SuperAdmin() {
             </div>
             
             <div className="space-y-2">
-              <Label htmlFor="max_monthly_messages">Mensagens por Mês</Label>
+              <Label htmlFor="max_messages_per_month">Mensagens por Mês</Label>
               <Input
-                id="max_monthly_messages"
+                id="max_messages_per_month"
                 type="number"
-                value={quotaEditForm.max_monthly_messages}
+                value={quotaEditForm.max_messages_per_month}
                 onChange={(e) => setQuotaEditForm(prev => ({
                   ...prev,
-                  max_monthly_messages: parseInt(e.target.value) || 0
+                  max_messages_per_month: parseInt(e.target.value) || 0
                 }))}
               />
             </div>

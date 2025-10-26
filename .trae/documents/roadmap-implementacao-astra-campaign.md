@@ -337,7 +337,7 @@ supabase/migrations/add_logging_system.sql
 
 | Fase | Duração | Funcionalidades Principais | Status |
 |------|---------|----------------------------|--------|
-| **Fase 1** | 2 semanas | Quotas + Roles | 🔄 Planejado |
+| **Fase 1** | 2 semanas | Quotas + Roles | 🚧 Em andamento |
 | **Fase 2** | 2 semanas | Campanhas Inteligentes | 🔄 Planejado |
 | **Fase 3** | 2 semanas | IA + Personalização | 🔄 Planejado |
 | **Fase 4** | 2 semanas | Analytics Avançado | 🔄 Planejado |
@@ -416,6 +416,41 @@ graph TD
 3. **Início da Fase 1** - Implementar sistema de quotas
 4. **Testes Contínuos** - Validar cada funcionalidade
 5. **Deploy Incremental** - Liberar funcionalidades por fase
+
+---
+
+## Atualização de Progresso - 2025-10-25
+
+- Roles & Multi-tenant (Supabase):
+  - Série de migrations aplicadas/ajustadas para RBAC e multi-tenant:
+    - 2025-10-19_multi_tenant.sql, 2025-10-19_fix_superadmin_policies.sql, 20251021124645_fix_roles_p_user_id.sql,
+      20251021124856_standardize_role_helpers_p_user_id.sql, 20251021130316_sql_checks_roles_rpcs.sql,
+      20251021131017_sql_checks_roles_rpcs_detailed.sql, 20251021131520_fix_is_tenant_admin_member_ambiguity.sql,
+      20251021132045_fix_is_tenant_helpers_use_local_param.sql, 20251021132310_sql_checks_has_permission_get_user_role.sql,
+      20251021132930_fix_get_user_role_ambiguity.sql, 20251021133140_fix_has_permission_ambiguity.sql.
+  - Correções nas funções auxiliares (get_user_role, has_permission) para evitar ambiguidade por usuário/tenant.
+  - Testes e scripts validados: scripts/test-roles-invite-logs.js e test-supabase-connection.js.
+
+- Quotas & Rate limit:
+  - Gating integrado nas páginas CreateCampaign e Campaigns:
+    - Banner de alerta e desabilitação de ações quando quotas bloquearem ou rate limit estiver ativo.
+    - Cálculo e exibição do próximo horário permitido quando houver rate limit.
+  - Hooks utilizados: useQuotas (counters, feature blocking, alerts) e useRateLimit (status, canSendMessage, nextAllowedTime).
+  - Próxima etapa: toasts automáticos ao atingir 85% e 100% do uso, com acknowledge dos alertas.
+
+- Integração com Campaign Engine e Multi-Sessão:
+  - Preparação para enforcement de gating no CampaignEngine (start/pause/resume).
+  - MultiSessionManager presente; próximos passos de distribuição e failover serão integrados no fluxo de campanha.
+
+- Validação em preview:
+  - Servidor de desenvolvimento: http://localhost:8000/.
+  - Mudanças validadas nas páginas WhatsAppConnections, Messages, CreateCampaign e Campaigns.
+
+Próximos passos imediatos:
+- Implementar toasts e banners de aviso para quotas em estado "critical" (≥85%) nas páginas de campanhas.
+- Reconhecer alertas de quota automaticamente após exibição (acknowledge).
+- Adicionar logs de auditoria para ações bloqueadas por rate limit ou quota.
+- Consolidar revisões de RBAC no frontend com RoleGuard/RoleContext e revisar constants/permissions.ts.
 
 ---
 

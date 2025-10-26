@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 import { useTenant } from '@/hooks/useTenant';
-import { RoleGuard, AdminOnly } from '@/components/RoleGuard';
+import { AdminOnly, SuperAdminOnly } from '@/components/RoleGuard'
 import { PermissionGuard } from '@/components/PermissionGuard';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,6 +28,8 @@ import {
   XCircle
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { Resources, Actions } from '@/constants/permissions';
+import { useRoleContext } from '@/contexts/RoleContext';
 
 interface TenantUser {
   id: string;
@@ -59,6 +61,7 @@ interface UserAction {
 
 export const RoleManagement: React.FC = () => {
   const { currentTenant } = useTenant();
+  const { logAction } = useRoleContext();
   
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -248,6 +251,8 @@ export const RoleManagement: React.FC = () => {
       // Logging realizado no backend (/api/roles: update_role)
 
       toast.success('Role do usuário atualizada com sucesso');
+      // Auditoria cliente
+      logAction(Actions.UPDATE_ROLE, Resources.USERS, { userId, newRole, result: 'success' }).catch(() => {})
       loadUsers();
     } catch (error) {
       console.error('Erro ao alterar role:', error);
@@ -280,6 +285,8 @@ export const RoleManagement: React.FC = () => {
       // Logging realizado no backend (/api/roles: remove)
 
       toast.success('Usuário removido com sucesso');
+      // Auditoria cliente
+      logAction(Actions.REMOVE, Resources.USERS, { userId, result: 'success' }).catch(() => {})
       loadUsers();
     } catch (error) {
       console.error('Erro ao remover usuário:', error);
@@ -313,6 +320,8 @@ export const RoleManagement: React.FC = () => {
       // Logging realizado no backend (/api/roles: invite)
 
       toast.success('Usuário adicionado com sucesso');
+      // Auditoria cliente
+      logAction(Actions.INVITE, Resources.USERS, { email: inviteEmail, role: inviteRole, result: 'success' }).catch(() => {})
       setIsInviteDialogOpen(false);
       setInviteEmail('');
       setInviteRole('USER');
@@ -346,6 +355,8 @@ export const RoleManagement: React.FC = () => {
       // Logging realizado no backend (/api/roles: update_permission)
 
       toast.success('Permissão atualizada com sucesso');
+      // Auditoria cliente
+      logAction(Actions.MANAGE_ROLE_PERMISSIONS, Resources.ROLES, { permissionId, allowed, result: 'success' }).catch(() => {})
       loadPermissions();
     } catch (error) {
       console.error('Erro ao atualizar permissão:', error);
@@ -388,7 +399,7 @@ export const RoleManagement: React.FC = () => {
             </p>
           </div>
           
-          <PermissionGuard allowedRoles={['ADMIN', 'SUPERADMIN']} resource="users" action="invite" mode="hide">
+          <PermissionGuard allowedRoles={['ADMIN', 'SUPERADMIN']} resource={Resources.USERS} action={Actions.INVITE} mode="hide">
             <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
               <DialogTrigger asChild>
                 <Button>
@@ -495,7 +506,7 @@ export const RoleManagement: React.FC = () => {
                           <div className="flex items-center gap-2">
                             {user.role !== 'SUPERADMIN' && (
                               <>
-                                <PermissionGuard allowedRoles={['ADMIN', 'SUPERADMIN']} resource="users" action="update_role" mode="hide">
+                                <PermissionGuard allowedRoles={['ADMIN', 'SUPERADMIN']} resource={Resources.USERS} action={Actions.UPDATE_ROLE} mode="hide">
                                   <Select
                                     value={user.role}
                                     onValueChange={(value: 'ADMIN' | 'USER') => 
@@ -511,7 +522,7 @@ export const RoleManagement: React.FC = () => {
                                     </SelectContent>
                                   </Select>
                                 </PermissionGuard>
-                                <PermissionGuard allowedRoles={['ADMIN', 'SUPERADMIN']} resource="users" action="remove" mode="hide">
+                                <PermissionGuard allowedRoles={['ADMIN', 'SUPERADMIN']} resource={Resources.USERS} action={Actions.REMOVE} mode="hide">
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -533,7 +544,7 @@ export const RoleManagement: React.FC = () => {
           </TabsContent>
 
           <TabsContent value="permissions">
-            <RoleGuard allowedRoles={['SUPERADMIN']}>
+            <SuperAdminOnly>
               <Card>
                 <CardHeader>
                   <CardTitle>Permissões por Role</CardTitle>
@@ -549,15 +560,7 @@ export const RoleManagement: React.FC = () => {
                           <Badge variant={getRoleBadgeVariant(role)}>{role}</Badge>
                         </h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {permissions
-                            .filter(p => p.role === role)
-                            .reduce((acc, permission) => {
-                              const key = permission.resource;
-                              if (!acc[key]) acc[key] = [];
-                              acc[key].push(permission);
-                              return acc;
-                            }, {} as Record<string, Permission[]>)
-                          }
+
                           {Object.entries(
                             permissions
                               .filter(p => p.role === role)
@@ -592,7 +595,7 @@ export const RoleManagement: React.FC = () => {
                   </div>
                 </CardContent>
               </Card>
-            </RoleGuard>
+            </SuperAdminOnly>
           </TabsContent>
 
           <TabsContent value="audit">

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -40,7 +40,11 @@ import {
   Settings,
   Network,
   Shuffle,
-  Gauge
+  Gauge,
+  Webhook,
+  ArrowUp,
+  ArrowDown,
+  Trash2
 } from 'lucide-react'
 import {
   Select,
@@ -57,6 +61,15 @@ import { useTemplates } from '@/hooks/useTemplates'
 import { useMultiSession } from '@/hooks/useMultiSession'
 import { useRandomization } from '@/hooks/useRandomization'
 import { useRateLimit } from '@/hooks/useRateLimit'
+import { useQuotas } from '@/hooks/useQuotas'
+import { toast } from 'sonner'
+import { GatingBanner } from '@/components/GatingBanner'
+import { formatUsageTooltip } from '@/lib/utils'
+import { QuotaAlertsManager } from '@/components/QuotaAlertsManager'
+
+// Tipos de sequência para execução
+type SequenceMode = 'sequential' | 'parallel' | 'balanced'
+interface SequenceStep { id: string; type: 'message' | 'delay' | 'webhook'; label?: string; message?: { text?: string; template_id?: string }; delay?: { amount: number; unit: 'seconds' | 'minutes' | 'hours' }; webhook?: { url: string; method: 'GET' | 'POST'; payload?: string } }
 
 interface CampaignFormData {
   name: string
@@ -92,6 +105,7 @@ interface CampaignFormData {
     burst_control: boolean
     adaptive_rate: boolean
   }
+  execution_strategy?: { mode: SequenceMode; steps: SequenceStep[] }
 }
 
 interface ContactSegment {
@@ -109,7 +123,24 @@ export default function CreateCampaign() {
   const { templates, loading: templatesLoading } = useTemplates()
   const { instances, loadBalancingConfig } = useMultiSession()
   const { profiles: randomizationProfiles, activeProfile } = useRandomization()
-  const { configs: rateLimitConfigs, activeConfigs } = useRateLimit()
+  const { configs: rateLimitConfigs, activeConfigs, getStatus, canSendMessage, getNextAllowedTime } = useRateLimit()
+  const { loading: quotasLoading, getResourceUsage, canCreateResource, isFeatureBlocked, alerts, acknowledgeAlert } = useQuotas()
+
+  // Gating: quotas + rate limit + feature
+  const campaignUsage = getResourceUsage('campaigns')
+  const campaignsQuotaBlocked = !!campaignUsage && (campaignUsage.status === 'blocked' || !canCreateResource('campaigns') || isFeatureBlocked('campaigns'))
+  const messagesFeatureBlocked = isFeatureBlocked('messages')
+  const rateStatusGlobal = getStatus('global')
+  const canSendGlobal = canSendMessage('global')
+  const rateLimitedNow = !canSendGlobal
+  const nextAllowedTime = getNextAllowedTime('global')
+  const canSchedule = !campaignsQuotaBlocked && !messagesFeatureBlocked
+  const canSendNow = !campaignsQuotaBlocked && !messagesFeatureBlocked && canSendGlobal
+  const criticalState = !!campaignUsage && campaignUsage.status === 'critical'
+  
+
+
+
   
   const [formData, setFormData] = useState<CampaignFormData>({
     name: '',
@@ -138,6 +169,10 @@ export default function CreateCampaign() {
       messages_per_minute: 10,
       burst_control: true,
       adaptive_rate: true
+    },
+    execution_strategy: {
+      mode: 'sequential',
+      steps: []
     }
   })
   
@@ -149,7 +184,9 @@ export default function CreateCampaign() {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [segmentationMode, setSegmentationMode] = useState<'manual' | 'smart'>('manual')
   const [smartSegments, setSmartSegments] = useState<ContactSegment[]>([])
-
+  const [useSequence, setUseSequence] = useState(false)
+  const [invalidSteps, setInvalidSteps] = useState<number[]>([])
+  
   // Filtros avançados
   const [tagFilter, setTagFilter] = useState<string[]>([])
   const [locationFilter, setLocationFilter] = useState('')
@@ -270,6 +307,194 @@ export default function CreateCampaign() {
     }
   }
 
+  // Sequência: helpers de passos
+  const handleAddStep = (type: 'message' | 'delay' | 'webhook') => {
+    const newStepId = `step-${Date.now()}`
+    const base: SequenceStep = { id: newStepId, type }
+    const step: SequenceStep =
+      type === 'message'
+        ? { ...base, message: { text: '', template_id: formData.template_id } }
+        : type === 'delay'
+          ? { ...base, delay: { amount: 60, unit: 'seconds' } }
+          : { ...base, webhook: { url: '', method: 'POST', payload: '' } }
+  
+    setFormData(prev => ({
+      ...prev,
+      execution_strategy: {
+        mode: prev.execution_strategy?.mode || 'sequential',
+        steps: [...(prev.execution_strategy?.steps || []), step]
+      }
+    }))
+  }
+  
+  const handleUpdateStep = (index: number, updated: Partial<SequenceStep>) => {
+    let updatedStepValid = true
+    setFormData(prev => {
+      const steps = [...(prev.execution_strategy?.steps || [])]
+      const current = steps[index]
+      if (!current) return prev
+      const nextStep = { ...current, ...updated }
+      steps[index] = nextStep
+      // validar passo atualizado
+      if (nextStep.type === 'message') {
+        const hasText = !!nextStep.message?.text && nextStep.message.text.trim() !== ''
+        const hasTemplate = !!nextStep.message?.template_id
+        updatedStepValid = hasText || hasTemplate
+      } else if (nextStep.type === 'delay') {
+        const amount = nextStep.delay?.amount ?? 0
+        updatedStepValid = !!amount && amount > 0
+      } else if (nextStep.type === 'webhook') {
+        const url = nextStep.webhook?.url?.trim() || ''
+        updatedStepValid = !!url
+      }
+      return {
+        ...prev,
+        execution_strategy: {
+          mode: prev.execution_strategy?.mode || 'sequential',
+          steps
+        }
+      }
+    })
+    setInvalidSteps(prev => {
+      const set = new Set(prev)
+      if (updatedStepValid) {
+        set.delete(index)
+      } else {
+        set.add(index)
+      }
+      return Array.from(set)
+    })
+  }
+  
+  const moveStepUp = (index: number) => {
+    setFormData(prev => {
+      const steps = [...(prev.execution_strategy?.steps || [])]
+      if (index <= 0) return prev
+      const tmp = steps[index - 1]
+      steps[index - 1] = steps[index]
+      steps[index] = tmp
+      return {
+        ...prev,
+        execution_strategy: { mode: prev.execution_strategy?.mode || 'sequential', steps }
+      }
+    })
+    setInvalidSteps([])
+  }
+  
+  const moveStepDown = (index: number) => {
+    setFormData(prev => {
+      const steps = [...(prev.execution_strategy?.steps || [])]
+      if (index >= steps.length - 1) return prev
+      const tmp = steps[index + 1]
+      steps[index + 1] = steps[index]
+      steps[index] = tmp
+      return {
+        ...prev,
+        execution_strategy: { mode: prev.execution_strategy?.mode || 'sequential', steps }
+      }
+    })
+    setInvalidSteps([])
+  }
+  
+  const deleteStep = (index: number) => {
+    setFormData(prev => {
+      const steps = [...(prev.execution_strategy?.steps || [])]
+      steps.splice(index, 1)
+      return {
+        ...prev,
+        execution_strategy: { mode: prev.execution_strategy?.mode || 'sequential', steps }
+      }
+    })
+    setInvalidSteps([])
+  }
+
+  // Navegação: validação antes de avançar do Passo 3
+  const handleNextFromStep3 = () => {
+    if (useSequence) {
+      const steps = formData.execution_strategy?.steps || []
+      if (steps.length === 0) {
+        setErrors(prev => ({ ...prev, execution_strategy: 'Adicione ao menos um passo à sequência.' }))
+        return
+      }
+      const invalid = validateSequenceSteps()
+      if (invalid.length > 0) {
+        setInvalidSteps(invalid)
+        setErrors(prev => ({ ...prev, execution_strategy: `Existem passos com campos obrigatórios não preenchidos (índices: ${invalid.map(i => i + 1).join(', ')})` }))
+        return
+      } else {
+        setInvalidSteps([])
+      }
+      // limpar erro de sequência se existir
+      setErrors(prev => {
+        const next = { ...prev }
+        delete next.execution_strategy
+        return next
+      })
+    } else {
+      if (!formData.message || formData.message.trim() === '') {
+        setErrors(prev => ({ ...prev, message: 'Mensagem é obrigatória.' }))
+        return
+      }
+      // limpar erro de mensagem se existir
+      setErrors(prev => {
+        const next = { ...prev }
+        delete next.message
+        return next
+      })
+    }
+    setCurrentStep(4)
+  }
+
+  const handleNextFromStep5 = () => {
+    if (scheduleEnabled) {
+      if (!formData.scheduled_at || formData.scheduled_at.trim() === '') {
+        setErrors(prev => ({ ...prev, scheduled_at: 'Informe a data e hora do envio.' }))
+        return
+      }
+      const scheduled = new Date(formData.scheduled_at)
+      if (!isNaN(scheduled.getTime()) && scheduled.getTime() <= Date.now()) {
+        setErrors(prev => ({ ...prev, scheduled_at: 'A data e hora devem ser futuras.' }))
+        return
+      }
+      // Gating: quotas, feature e rate limit
+      if (campaignsQuotaBlocked) {
+        setErrors(prev => ({ ...prev, scheduled_at: 'Agendamento bloqueado: limite de campanhas atingido.' }))
+        return
+      }
+      if (messagesFeatureBlocked) {
+        setErrors(prev => ({ ...prev, scheduled_at: 'Agendamento bloqueado: recurso de mensagens indisponível no seu plano.' }))
+        return
+      }
+      const status = getStatus('global')
+      if (status?.isLimited) {
+        setErrors(prev => ({ ...prev, scheduled_at: 'Envio bloqueado pelo rate limit no momento. Próximo envio permitido ' + (nextAllowedTime ? new Date(nextAllowedTime as number).toLocaleString() : 'em breve') }))
+        return
+      }
+    }
+    setErrors(prev => { const next = { ...prev }; delete next.scheduled_at; return next })
+    setCurrentStep(6)
+  }
+
+  // Validação detalhada dos passos da sequência
+  const validateSequenceSteps = (): number[] => {
+    const steps = formData.execution_strategy?.steps || []
+    const invalid: number[] = []
+    steps.forEach((step, idx) => {
+      if (step.type === 'message') {
+        const hasText = !!step.message?.text && step.message.text.trim() !== ''
+        const hasTemplate = !!step.message?.template_id
+        if (!hasText && !hasTemplate) invalid.push(idx)
+      } else if (step.type === 'delay') {
+        const amount = step.delay?.amount ?? 0
+        if (!amount || amount <= 0) invalid.push(idx)
+      } else if (step.type === 'webhook') {
+        const url = step.webhook?.url?.trim() || ''
+        if (!url) invalid.push(idx)
+      }
+    })
+    return invalid
+  }
+
   const validateForm = () => {
     const newErrors: Record<string, string> = {}
     
@@ -277,16 +502,37 @@ export default function CreateCampaign() {
       newErrors.name = 'Nome da campanha é obrigatório'
     }
     
-    if (!formData.message.trim()) {
-      newErrors.message = 'Mensagem é obrigatória'
+    if (useSequence) {
+      if (!formData.execution_strategy || !formData.execution_strategy.steps || formData.execution_strategy.steps.length === 0) {
+        newErrors.execution_strategy = 'Adicione ao menos um passo na sequência'
+      } else {
+        const invalid = validateSequenceSteps()
+        if (invalid.length > 0) {
+          newErrors.execution_strategy = `Existem passos com campos obrigatórios não preenchidos (índices: ${invalid.map(i => i + 1).join(', ')})`
+          setInvalidSteps(invalid)
+        } else {
+          setInvalidSteps([])
+        }
+      }
+    } else {
+      if (!formData.message.trim()) {
+        newErrors.message = 'Mensagem é obrigatória'
+      }
     }
     
     if (selectedContacts.length === 0) {
       newErrors.contacts = 'Selecione pelo menos um contato'
     }
     
-    if (scheduleEnabled && !formData.scheduled_at) {
-      newErrors.scheduled_at = 'Data de agendamento é obrigatória'
+    if (scheduleEnabled) {
+      if (!formData.scheduled_at) {
+        newErrors.scheduled_at = 'Data de agendamento é obrigatória'
+      } else {
+        const scheduled = new Date(formData.scheduled_at)
+        if (!isNaN(scheduled.getTime()) && scheduled.getTime() <= Date.now()) {
+          newErrors.scheduled_at = 'A data e hora devem ser futuras'
+        }
+      }
     }
     
     setErrors(newErrors)
@@ -295,12 +541,58 @@ export default function CreateCampaign() {
 
   const handleSubmit = async () => {
     if (!validateForm()) return
+
+    // Gating: bloqueios antes de criar campanha
+    if (scheduleEnabled) {
+      if (campaignsQuotaBlocked) {
+        setErrors(prev => ({ ...prev, scheduled_at: 'Agendamento bloqueado: limite de campanhas atingido.' }))
+        return
+      }
+      if (messagesFeatureBlocked) {
+        setErrors(prev => ({ ...prev, scheduled_at: 'Agendamento bloqueado: recurso de mensagens indisponível no seu plano.' }))
+        return
+      }
+      // Observação: rate limit ativo agora não impede agendar para o futuro; o aviso é mostrado no Passo 5
+    } else {
+      if (campaignsQuotaBlocked) {
+        setErrors(prev => ({ ...prev, message: 'Envio bloqueado: limite de campanhas atingido.' }))
+        return
+      }
+      if (messagesFeatureBlocked) {
+        setErrors(prev => ({ ...prev, message: 'Envio bloqueado: recurso de mensagens indisponível no seu plano.' }))
+        return
+      }
+      const status = getStatus('global')
+      if (status?.isLimited) {
+        setErrors(prev => ({ ...prev, message: 'Envio bloqueado pelo rate limit. Próximo envio permitido ' + (nextAllowedTime ? new Date(nextAllowedTime as number).toLocaleString() : 'em breve') }))
+        return
+      }
+    }
     
     try {
+      const executionStrategyPayload = useSequence
+        ? formData.execution_strategy
+        : {
+            mode: 'sequential',
+            steps: [
+              {
+                id: 'msg-1',
+                type: 'message',
+                message: {
+                  text: formData.message,
+                  template_id: formData.template_id
+                }
+              }
+            ]
+          }
+
       const campaignData = {
-        ...formData,
+        name: formData.name,
+        description: formData.description,
+        template_id: formData.template_id,
         target_contacts: selectedContacts,
-        scheduled_at: scheduleEnabled ? formData.scheduled_at : null
+        scheduled_at: scheduleEnabled ? formData.scheduled_at : null,
+        execution_strategy: executionStrategyPayload
       }
       
       await createCampaign(campaignData)
@@ -311,11 +603,36 @@ export default function CreateCampaign() {
   }
 
   const handleSaveDraft = async () => {
+    // Gating: impedir salvar rascunho quando quotas estão bloqueadas
+    if (campaignsQuotaBlocked) {
+      setErrors(prev => ({ ...prev, name: 'Salvar rascunho bloqueado: limite de campanhas atingido.' }))
+      return
+    }
     try {
+      const executionStrategyPayload = useSequence
+        ? formData.execution_strategy
+        : {
+            mode: 'sequential',
+            steps: [
+              {
+                id: 'msg-1',
+                type: 'message',
+                message: {
+                  text: formData.message,
+                  template_id: formData.template_id
+                }
+              }
+            ]
+          }
+
       const campaignData = {
-        ...formData,
+        name: formData.name,
+        description: formData.description,
+        template_id: formData.template_id,
         target_contacts: selectedContacts,
-        status: 'draft' as 'draft'
+        execution_strategy: executionStrategyPayload,
+        status: 'draft' as 'draft',
+        scheduled_at: scheduleEnabled ? formData.scheduled_at : null
       }
       
       await createCampaign(campaignData)
@@ -365,7 +682,7 @@ export default function CreateCampaign() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={handleSaveDraft} disabled={campaignLoading}>
+          <Button variant="outline" onClick={handleSaveDraft} disabled={campaignLoading || campaignsQuotaBlocked} title={campaignsQuotaBlocked ? formatUsageTooltip(campaignUsage?.current, campaignUsage?.max) : undefined}>
             <Save className="h-4 w-4 mr-2" />
             Salvar Rascunho
           </Button>
@@ -375,6 +692,20 @@ export default function CreateCampaign() {
           </Button>
         </div>
       </div>
+
+      {/* Quota alerts (toasts) */}
+      <QuotaAlertsManager showCriticalToast usage={campaignUsage} />
+
+      {/* Gating Banner */}
+      <GatingBanner
+        campaignsQuotaBlocked={campaignsQuotaBlocked}
+        messagesFeatureBlocked={messagesFeatureBlocked}
+        rateLimitedNow={rateLimitedNow}
+        criticalState={criticalState}
+        campaignsUsage={campaignUsage}
+        nextAllowedTime={nextAllowedTime}
+        rateTimeMode="relative"
+      />
 
       {/* Progress Steps */}
       <Card>
@@ -459,6 +790,405 @@ export default function CreateCampaign() {
                   <div className="flex items-center justify-end">
                     <Button onClick={() => setCurrentStep(2)}>
                       Próximo: Selecionar Público
+                      <ArrowLeft className="h-4 w-4 ml-2 rotate-180" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Passo 2: Seleção de Público */}
+            <TabsContent value="2" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="h-5 w-5" />
+                    Seleção de Público
+                  </CardTitle>
+                  <CardDescription>
+                    Busque, filtre e selecione os contatos que receberão esta campanha
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {/* Filtros */}
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <Label>Buscar Contatos</Label>
+                        <div className="relative">
+                          <Search className="h-4 w-4 absolute left-2 top-2.5 text-muted-foreground" />
+                          <Input
+                            placeholder="Nome ou telefone..."
+                            className="pl-8"
+                            value={contactFilter}
+                            onChange={(e) => setContactFilter(e.target.value)}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Tags</Label>
+                        <div className="flex items-center gap-2">
+                          <Select
+                            onValueChange={(tag) => setTagFilter(prev => prev.includes(tag) ? prev : [...prev, tag])}
+                          >
+                            <SelectTrigger className="w-[180px]">
+                              <SelectValue placeholder="Adicionar tag" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Array.from(new Set(contacts.flatMap(c => c.tags || []))).map(tag => (
+                                <SelectItem key={tag} value={tag}>{tag}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <div className="flex flex-wrap gap-2">
+                            {tagFilter.map(tag => (
+                              <Badge key={tag} variant="secondary" className="flex items-center gap-1">
+                                <Tag className="h-3 w-3" />
+                                {tag}
+                                <button
+                                  type="button"
+                                  onClick={() => setTagFilter(prev => prev.filter(t => t !== tag))}
+                                  className="ml-1 hover:text-red-600"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Localização</Label>
+                        <div className="relative">
+                          <MapPin className="h-4 w-4 absolute left-2 top-2.5 text-muted-foreground" />
+                          <Input
+                            placeholder="Cidade, estado..."
+                            className="pl-8"
+                            value={locationFilter}
+                            onChange={(e) => setLocationFilter(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                          <Checkbox
+                            checked={selectedContacts.length === filteredContacts.length && filteredContacts.length > 0}
+                            onCheckedChange={handleSelectAllContacts}
+                          />
+                          <span className="text-sm">Selecionar todos os {filteredContacts.length} contato(s)</span>
+                        </div>
+                        {errors.contacts && (
+                          <p className="text-sm text-red-600 flex items-center gap-1">
+                            <AlertCircle className="h-4 w-4" />
+                            {errors.contacts}
+                          </p>
+                        )}
+                      </div>
+                      <Button variant="outline" onClick={generateSmartSegments}>
+                        <Sparkles className="h-4 w-4 mr-2" /> Sugestões de Segmentos
+                      </Button>
+                    </div>
+
+                    {!!smartSegments.length && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {smartSegments.map(segment => (
+                          <div key={segment.id} className="p-3 border rounded-lg flex items-center justify-between">
+                            <div>
+                              <div className="font-medium">{segment.name}</div>
+                              <p className="text-sm text-muted-foreground">{segment.description}</p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <Badge variant="outline">{segment.count}</Badge>
+                              <Button variant="secondary" size="sm" onClick={() => handleSegmentSelect(segment)}>
+                                Selecionar
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <Separator />
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Users className="h-4 w-4" />
+                          <span className="text-sm">Selecionados: {selectedContacts.length}</span>
+                        </div>
+                        <Button variant="outline" size="sm" onClick={() => setSelectedContacts([])}>Limpar seleção</Button>
+                      </div>
+
+                      {contactsLoading ? (
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>Carregando contatos…</span>
+                        </div>
+                      ) : filteredContacts.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">Nenhum contato encontrado com os filtros.</p>
+                      ) : (
+                        <div className="border rounded-md">
+                          <div className="divide-y">
+                            {filteredContacts.map((contact) => (
+                              <div key={contact.id} className="flex items-center justify-between p-3">
+                                <div className="flex items-center gap-3">
+                                  <Checkbox
+                                    checked={selectedContacts.includes(contact.id)}
+                                    onCheckedChange={() => handleContactToggle(contact.id)}
+                                  />
+                                  <div>
+                                    <div className="font-medium">{contact.name}</div>
+                                    <div className="text-xs text-muted-foreground flex items-center gap-2">
+                                      <Phone className="h-3 w-3" /> {contact.phone}
+                                      {contact.location && (<><MapPin className="h-3 w-3" /> {contact.location}</>)}
+                                    </div>
+                                    {!!contact.tags?.length && (
+                                      <div className="mt-1 flex flex-wrap gap-1">
+                                        {contact.tags!.map((tag) => (
+                                          <Badge key={tag} variant="outline" className="text-xs">{tag}</Badge>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                <div>
+                                  {selectedContacts.includes(contact.id) ? (
+                                    <Badge variant="success">Selecionado</Badge>
+                                  ) : (
+                                    <Badge variant="secondary">Disponível</Badge>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <Button variant="outline" onClick={() => setCurrentStep(1)}>
+                        Voltar: Básico
+                        <ArrowLeft className="h-4 w-4 ml-2" />
+                      </Button>
+                      <Button onClick={() => setCurrentStep(3)}>
+                        Próximo: Mensagem
+                        <ArrowLeft className="h-4 w-4 ml-2 rotate-180" />
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Passo 3: Mensagem e Sequência */}
+            <TabsContent value="3" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <MessageSquare className="h-5 w-5" />
+                    Mensagem e Sequência
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <Label className="text-base font-medium">Usar Sequência</Label>
+                      <p className="text-sm text-muted-foreground">Ative para executar múltiplos passos</p>
+                    </div>
+                    <Switch checked={useSequence} onCheckedChange={setUseSequence} />
+                  </div>
+
+                  {!useSequence ? (
+                    <div className="space-y-2">
+                      <Label>Mensagem *</Label>
+                      <Textarea rows={5} placeholder="Digite sua mensagem..." value={formData.message} onChange={(e)=>handleInputChange('message', e.target.value)} className={errors.message ? 'border-red-500' : ''} />
+                      {errors.message && <p className="text-sm text-red-600 flex items-center gap-1"><AlertCircle className="h-4 w-4"/>{errors.message}</p>}
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-2"><Gauge className="h-4 w-4"/> Modo de Execução</Label>
+                          <Select
+                            value={formData.execution_strategy?.mode || 'sequential'}
+                            onValueChange={(value: any) =>
+                              setFormData(prev => ({
+                                ...prev,
+                                execution_strategy: {
+                                  mode: value as SequenceMode,
+                                  steps: prev.execution_strategy?.steps || []
+                                }
+                              }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="sequential">Sequencial</SelectItem>
+                              <SelectItem value="parallel">Paralelo</SelectItem>
+                              <SelectItem value="balanced">Balanceado</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2 md:col-span-2">
+                          <Label>Adicionar Passo</Label>
+                          <div className="flex flex-wrap gap-2">
+                            <Button variant="outline" onClick={() => handleAddStep('message')}><Plus className="h-4 w-4 mr-2"/>Mensagem</Button>
+                            <Button variant="outline" onClick={() => handleAddStep('delay')}><Clock className="h-4 w-4 mr-2"/>Atraso</Button>
+                            <Button variant="outline" onClick={() => handleAddStep('webhook')}><Webhook className="h-4 w-4 mr-2"/>Webhook</Button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        {(!formData.execution_strategy?.steps || formData.execution_strategy.steps.length === 0) ? (
+                          <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                            Nenhum passo adicionado. Use os botões acima para criar a sequência.
+                          </div>
+                        ) : (
+                          formData.execution_strategy!.steps.map((step, index) => (
+                            <div key={step.id} className={`rounded-lg border p-4 space-y-3 bg-muted/30 ${invalidSteps.includes(index) ? 'border-red-500' : ''}`}>
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  {step.type === 'message' && <MessageSquare className="h-4 w-4 text-green-600" />}
+                                  {step.type === 'delay' && <Clock className="h-4 w-4 text-yellow-600" />}
+                                  {step.type === 'webhook' && <Webhook className="h-4 w-4 text-blue-600" />}
+                                  <div className="font-medium">Passo {index + 1}: {step.type === 'message' ? 'Mensagem' : step.type === 'delay' ? 'Atraso' : 'Webhook'}</div>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <Button variant="ghost" size="icon" onClick={() => moveStepUp(index)} disabled={index === 0}>
+                                    <ArrowUp className="h-4 w-4" />
+                                  </Button>
+                                  <Button variant="ghost" size="icon" onClick={() => moveStepDown(index)} disabled={index === (formData.execution_strategy!.steps.length - 1)}>
+                                    <ArrowDown className="h-4 w-4" />
+                                  </Button>
+                                  <Button variant="ghost" size="icon" onClick={() => deleteStep(index)}>
+                                    <Trash2 className="h-4 w-4 text-red-600" />
+                                  </Button>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                  <Label>Rótulo</Label>
+                                  <Input value={step.label || ''} onChange={(e) => handleUpdateStep(index, { label: e.target.value })} placeholder="Ex.: Saudação inicial" />
+                                </div>
+
+                                {step.type === 'message' && (
+                                  <>
+                                    <div className="space-y-2 md:col-span-2">
+                                      <Label>Mensagem</Label>
+                                      <Textarea rows={4} value={step.message?.text || ''} onChange={(e) => handleUpdateStep(index, { message: { text: e.target.value, template_id: step.message?.template_id } })} />
+                                      {invalidSteps.includes(index) && (!step.message?.text || step.message.text.trim() === '') && !step.message?.template_id && (
+                                        <p className="text-xs text-red-600 flex items-center gap-1"><AlertCircle className="h-3 w-3"/>Informe o texto ou selecione um template.</p>
+                                      )}
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Template (opcional)</Label>
+                                      <Select
+                                        value={step.message?.template_id || ''}
+                                        onValueChange={(value: any) => handleUpdateStep(index, { message: { text: step.message?.text || '', template_id: value || undefined } })}
+                                      >
+                                        <SelectTrigger>
+                                          <SelectValue placeholder="Selecione um template" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {templates.map(t => (
+                                            <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                                          ))}
+                                          <SelectItem value="">Sem template</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  </>
+                                )}
+
+                                {step.type === 'delay' && (
+                                  <>
+                                    <div className="space-y-2">
+                                      <Label>Quantidade</Label>
+                                      <Input type="number" min="1" value={step.delay?.amount ?? 60} onChange={(e) => handleUpdateStep(index, { delay: { amount: parseInt(e.target.value) || 0, unit: step.delay?.unit || 'seconds' } })} />
+                                      {invalidSteps.includes(index) && (!step.delay?.amount || step.delay.amount <= 0) && (
+                                        <p className="text-xs text-red-600 flex items-center gap-1"><AlertCircle className="h-3 w-3"/>Informe um valor maior que 0.</p>
+                                      )}
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Unidade</Label>
+                                      <Select
+                                        value={step.delay?.unit || 'seconds'}
+                                        onValueChange={(value: any) => handleUpdateStep(index, { delay: { amount: step.delay?.amount ?? 60, unit: value as 'seconds' | 'minutes' | 'hours' } })}
+                                      >
+                                        <SelectTrigger>
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="seconds">Segundos</SelectItem>
+                                          <SelectItem value="minutes">Minutos</SelectItem>
+                                          <SelectItem value="hours">Horas</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  </>
+                                )}
+
+                                {step.type === 'webhook' && (
+                                  <>
+                                    <div className="space-y-2">
+                                      <Label>URL</Label>
+                                      <Input type="url" value={step.webhook?.url || ''} onChange={(e) => handleUpdateStep(index, { webhook: { url: e.target.value, method: step.webhook?.method || 'POST', payload: step.webhook?.payload } })} placeholder="https://..." />
+                                      {invalidSteps.includes(index) && (!step.webhook?.url || step.webhook.url.trim() === '') && (
+                                        <p className="text-xs text-red-600 flex items-center gap-1"><AlertCircle className="h-3 w-3"/>Informe a URL do webhook.</p>
+                                      )}
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Método</Label>
+                                      <Select
+                                        value={step.webhook?.method || 'POST'}
+                                        onValueChange={(value: any) => handleUpdateStep(index, { webhook: { url: step.webhook?.url || '', method: value as 'GET' | 'POST', payload: step.webhook?.payload } })}
+                                      >
+                                        <SelectTrigger>
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="GET">GET</SelectItem>
+                                          <SelectItem value="POST">POST</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                    <div className="md:col-span-2 space-y-2">
+                                      <Label>Payload (opcional)</Label>
+                                      <Textarea rows={3} value={step.webhook?.payload || ''} onChange={(e) => handleUpdateStep(index, { webhook: { url: step.webhook?.url || '', method: step.webhook?.method || 'POST', payload: e.target.value } })} />
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {errors.execution_strategy && (
+                        <p className="text-sm text-red-600 flex items-center gap-1">
+                          <AlertCircle className="h-4 w-4" />
+                          {errors.execution_strategy}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between">
+                    <Button variant="outline" onClick={()=>setCurrentStep(2)}>
+                      Voltar: Público
+                      <ArrowLeft className="h-4 w-4 ml-2" />
+                    </Button>
+                    <Button onClick={handleNextFromStep3}>
+                      Próximo: Avançado
                       <ArrowLeft className="h-4 w-4 ml-2 rotate-180" />
                     </Button>
                   </div>
@@ -833,7 +1563,7 @@ export default function CreateCampaign() {
                       <ArrowLeft className="h-4 w-4 mr-2" />
                       Voltar
                     </Button>
-                    <Button onClick={() => setCurrentStep(5)}>
+                    <Button onClick={() => setCurrentStep(5)} disabled={!canSchedule}>
                       Próximo: Agendamento
                       <ArrowLeft className="h-4 w-4 ml-2 rotate-180" />
                     </Button>
@@ -842,8 +1572,145 @@ export default function CreateCampaign() {
               </Card>
             </TabsContent>
 
-            {/* ... existing code for other tabs ... */}
+          {/* Passo 5: Agendamento */}
+          <TabsContent value="5" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Calendar className="h-5 w-5" />
+                  Agendamento
+                </CardTitle>
+                <CardDescription>
+                  Opcionalmente, programe quando a campanha deve ser enviada
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-base font-medium">Agendar envio</Label>
+                    <p className="text-sm text-muted-foreground">Ative para escolher data e hora</p>
+                  </div>
+                  <Switch checked={scheduleEnabled} onCheckedChange={setScheduleEnabled} disabled={!canSchedule} />
+                </div>
+
+                {scheduleEnabled && (
+                  <div className="space-y-2">
+                    <Label>Data e hora</Label>
+                    <Input
+                      type="datetime-local"
+                      value={formData.scheduled_at}
+                      onChange={(e) => handleInputChange('scheduled_at', e.target.value)}
+                      disabled={!canSchedule}
+                      className={errors.scheduled_at ? 'border-red-500' : ''}
+                    />
+                    {errors.scheduled_at && (
+                      <p className="text-sm text-red-600 flex items-center gap-1">
+                        <AlertCircle className="h-4 w-4" />
+                        {errors.scheduled_at}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between">
+                  <Button variant="outline" onClick={() => setCurrentStep(4)}>
+                    Voltar: Avançado
+                    <ArrowLeft className="h-4 w-4 ml-2" />
+                  </Button>
+                  <Button onClick={handleNextFromStep5}>
+                    Próximo: Revisão
+                    <ArrowLeft className="h-4 w-4 ml-2 rotate-180" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Passo 6: Revisão e Envio */}
+          <TabsContent value="6" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <CheckCircle className="h-5 w-5" />
+                  Revisão e Envio
+                </CardTitle>
+                <CardDescription>
+                  Revise os detalhes e envie a campanha
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Nome</Label>
+                    <p className="text-sm text-muted-foreground">{formData.name || '—'}</p>
+                    <Label>Descrição</Label>
+                    <p className="text-sm text-muted-foreground">{formData.description || '—'}</p>
+                    <Label>Público</Label>
+                    <p className="text-sm text-muted-foreground">{selectedContacts.length} contato(s)</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Mensagem</Label>
+                    <p className="text-sm text-muted-foreground">{useSequence ? `Sequência com ${(formData.execution_strategy?.steps || []).length} passo(s)` : (formData.message ? `${Math.min(formData.message.length, 120)} caracteres` : '—')}</p>
+                    <Label>Agendamento</Label>
+                    <p className="text-sm text-muted-foreground">{scheduleEnabled && formData.scheduled_at ? new Date(formData.scheduled_at).toLocaleString() : 'Imediato'}</p>
+                  </div>
+                </div>
+
+                {useSequence && (formData.execution_strategy?.steps || []).length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Detalhes da Execução</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Modo: {formData.execution_strategy?.mode === 'sequential' ? 'Sequencial' : formData.execution_strategy?.mode === 'parallel' ? 'Paralelo' : 'Balanceado'}
+                    </p>
+                    <div className="space-y-2">
+                      {(formData.execution_strategy?.steps || []).map((step, idx) => (
+                        <div key={step.id || idx} className="rounded-md border p-3">
+                          <p className="text-sm">
+                            Passo {idx + 1}: {step.type === 'message' ? 'Mensagem' : step.type === 'delay' ? 'Atraso' : 'Webhook'}
+                          </p>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {step.type === 'message' && (
+                              <p>{step.message?.template_id ? `Template #${step.message.template_id}` : `${(step.message?.text || '').slice(0, 120) || '—'}`}</p>
+                            )}
+                            {step.type === 'delay' && (
+                              <p>{step.delay?.amount} {step.delay?.unit === 'seconds' ? 'segundo(s)' : step.delay?.unit === 'minutes' ? 'minuto(s)' : 'hora(s)'}</p>
+                            )}
+                            {step.type === 'webhook' && (
+                              <p>{step.webhook?.method || 'POST'} {step.webhook?.url || '—'}</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <Separator />
+
+                <div className="flex items-center justify-between">
+                  <Button variant="outline" onClick={() => setCurrentStep(5)}>
+                    Voltar: Agenda
+                    <ArrowLeft className="h-4 w-4 ml-2" />
+                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button variant="secondary" onClick={handleSaveDraft} disabled={campaignsQuotaBlocked} title={campaignsQuotaBlocked ? formatUsageTooltip(campaignUsage?.current, campaignUsage?.max) : undefined}>
+                      <Save className="h-4 w-4 mr-2" />
+                      Salvar rascunho
+                    </Button>
+                    <Button onClick={handleSubmit} disabled={scheduleEnabled ? !canSchedule : !canSendNow}>
+                      <Send className="h-4 w-4 mr-2" />
+                      Enviar campanha
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           </Tabs>
+
+            {/* Dicas removidas - será reposicionada posteriormente */}
+          </div>
         </div>
 
         {/* Sidebar */}
@@ -860,46 +1727,35 @@ export default function CreateCampaign() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Alcance estimado</span>
-                <Badge variant="secondary">{selectedContacts.length * 0.95}%</Badge>
+                <Badge variant="secondary">≈ {Math.round(selectedContacts.length * 0.95)} contato(s) (~95%)</Badge>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Custo estimado</span>
-                <Badge variant="secondary">R$ {(selectedContacts.length * 0.05).toFixed(2)}</Badge>
+                <Badge variant="secondary">
+                  R$ {(
+                    selectedContacts.length * 0.05 *
+                    (useSequence
+                      ? (formData.execution_strategy?.steps?.filter((s) => s.type === 'message')?.length || 0)
+                      : ((formData.message && formData.message.trim() !== '') || formData.template_id ? 1 : 0)
+                    )
+                  ).toFixed(2)}
+                </Badge>
               </div>
-            </CardContent>
-          </Card>
-
-          {/* Dicas */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Zap className="h-5 w-5" />
-                Dicas para Sucesso
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="text-sm space-y-2">
-                <p className="flex items-start gap-2">
-                  <CheckCircle className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
-                  Use variáveis para personalizar mensagens
-                </p>
-                <p className="flex items-start gap-2">
-                  <CheckCircle className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
-                  Teste com um grupo pequeno primeiro
-                </p>
-                <p className="flex items-start gap-2">
-                  <CheckCircle className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
-                  Evite horários de descanso
-                </p>
-                <p className="flex items-start gap-2">
-                  <CheckCircle className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
-                  Mantenha mensagens concisas
-                </p>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Agendamento</span>
+                <Badge variant="secondary">{scheduleEnabled && formData.scheduled_at ? new Date(formData.scheduled_at).toLocaleString() : 'Imediato'}</Badge>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Execução</span>
+                <Badge variant="secondary">
+                  {useSequence
+                    ? `${formData.execution_strategy?.mode === 'sequential' ? 'Sequencial' : formData.execution_strategy?.mode === 'parallel' ? 'Paralelo' : 'Balanceado'} · ${formData.execution_strategy?.steps?.length || 0} passo(s)`
+                    : 'Mensagem única'}
+                </Badge>
               </div>
             </CardContent>
           </Card>
         </div>
       </div>
-    </div>
   )
 }
