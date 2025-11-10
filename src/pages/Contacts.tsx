@@ -44,6 +44,8 @@ import { supabase } from '@/lib/supabase'
 import { useQuotas } from '@/hooks/useQuotas'
 import { useNavigate } from 'react-router-dom'
 import { QuotaAlertsManager } from '@/components/QuotaAlertsManager'
+import ContactImportModal from '@/components/ContactImportModal'
+import { useTenant } from '@/hooks/useTenant'
 import { GatingBanner } from '@/components/GatingBanner'
 import { formatUsageTooltip } from '@/lib/utils'
 
@@ -78,10 +80,12 @@ export default function Contacts() {
   const [loading, setLoading] = useState(true)
   
   const { user } = useAuth()
+  const { currentTenant } = useTenant()
   const { toast } = useToast()
   const { canCreateResource, getResourceUsage, loading: quotasLoading, isFeatureBlocked } = useQuotas()
   const messagesFeatureBlocked = isFeatureBlocked('messages')
   const navigate = useNavigate()
+  const [importOpen, setImportOpen] = useState(false)
 
   // Carregar dados iniciais
   useEffect(() => {
@@ -256,9 +260,15 @@ export default function Contacts() {
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Atualizar
           </Button>
-          <Button variant="outline" className="gap-2" disabled={quotasLoading || !canImportContacts} title={!canImportContacts ? formatUsageTooltip(contactsUsage?.current, contactsUsage?.max) : undefined}>
+          <Button
+            variant="outline"
+            className="gap-2"
+            disabled={quotasLoading || !canImportContacts}
+            title={!canImportContacts ? formatUsageTooltip(contactsUsage?.current, contactsUsage?.max) : undefined}
+            onClick={() => setImportOpen(true)}
+          >
             <Upload className="h-4 w-4" />
-            Importar
+            Importar Contatos
           </Button>
           <Button variant="outline" className="gap-2">
             <Download className="h-4 w-4" />
@@ -445,6 +455,16 @@ export default function Contacts() {
           </div>
         </CardContent>
       </Card>
+      {/* Import Modal */}
+      {user && (
+        <ContactImportModal
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          tenantId={currentTenant?.id}
+          userId={user.id}
+          onImported={loadContacts}
+        />
+      )}
     </div>
   )
 }

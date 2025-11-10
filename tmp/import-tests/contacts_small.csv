@@ -1,0 +1,4 @@
+﻿name,phone,email,tags
+Maria,5511999998888,maria@example.com,"vip,lead"
+Joao,(11) 98888-7777,joao@example.com,"lead"
+Maria Duplicate,5511999998888,maria2@example.com,"vip"
