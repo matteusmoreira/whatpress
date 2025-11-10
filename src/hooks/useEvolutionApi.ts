@@ -104,13 +104,28 @@ export function useEvolutionApi() {
         // Limpa código de pareamento quando conecta
         setPairingCodes(prev => { const next = { ...prev }; delete next[instanceId]; return next })
         toast({ title: 'Instância conectada', description: 'Seu WhatsApp foi conectado com sucesso.' })
+
+        // Aguarda 2s para estabilizar e sincroniza contatos se ainda não carregados
+        try {
+          const shouldFetch = !contacts || contacts.length === 0
+          if (shouldFetch) {
+            await new Promise(resolve => setTimeout(resolve, 2000))
+            const targetInstance = instances.find(i => i.id === instanceId)
+            if (targetInstance) {
+              await fetchContactsAndSave(targetInstance)
+            }
+          }
+        } catch (syncError: unknown) {
+          const message = syncError instanceof Error ? syncError.message : 'Erro desconhecido'
+          toast({ title: 'Falha ao sincronizar contatos', description: message, variant: 'destructive' })
+        }
       }
       return status as WhatsAppInstance['status']
     } catch (error: any) {
       toast({ title: 'Erro ao verificar status', description: error?.message, variant: 'destructive' })
       return 'error' as WhatsAppInstance['status']
     }
-  }, [toast, currentTenant?.id])
+  }, [toast, currentTenant?.id, instances, contacts, fetchContactsAndSave])
 
   const deleteInstance = useCallback(async (instanceId: string) => {
     try {
@@ -199,6 +214,124 @@ export function useEvolutionApi() {
     }
   }, [toast, canSendRL, getNextAllowedTime, recordMessageSent, logAction])
 
+  const sendMedia = useCallback(
+    async (
+      targetInstance: WhatsAppInstance,
+      toNumber: string,
+      mediaUrl: string,
+      caption?: string,
+      type: 'image' | 'document' | 'audio' | 'video' = 'image'
+    ) => {
+      try {
+        if (targetInstance.status !== 'connected') {
+          toast({ title: 'Instância não conectada', description: 'Conecte a instância antes de enviar mídia.', variant: 'destructive' })
+          return { success: false }
+        }
+
+        const scope = 'instance'
+        const targetId = targetInstance.id
+        if (!canSendRL(scope, targetId)) {
+          const next = getNextAllowedTime(scope, targetId)
+          toast({
+            title: 'Limite de envio atingido',
+            description: next ? `Tente novamente em ${next.toLocaleTimeString()}` : 'Tente novamente mais tarde.',
+            variant: 'destructive'
+          })
+          logAction('rate_limit_block', 'media', { instanceId: targetId, nextAllowedTime: next })
+          return { success: false }
+        }
+
+        const instanceName = targetInstance.api_key || targetInstance.name
+        const evolutionApi = new EvolutionApiService({
+          baseUrl: import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080',
+          apiKey: import.meta.env.VITE_EVOLUTION_API_KEY || 'your-api-key',
+          instanceName
+        })
+
+        await evolutionApi.sendMediaMessage(toNumber, mediaUrl, caption, type)
+        await recordMessageSent(scope, targetId, true)
+        toast({ title: 'Mídia enviada' })
+        logAction('media_sent', 'media', { instanceId: targetId, to: toNumber, type })
+        return { success: true }
+      } catch (error: any) {
+        try { await recordMessageSent('instance', targetInstance.id, false) } catch {}
+        toast({ title: 'Erro ao enviar mídia', description: error?.message, variant: 'destructive' })
+        return { success: false }
+      }
+    },
+    [toast, canSendRL, getNextAllowedTime, recordMessageSent, logAction]
+  )
+
+  // Função para salvar contatos no banco de dados
+  const saveContactsToDatabase = useCallback(async (contacts: WhatsAppContact[], instanceId: string) => {
+    try {
+      if (!contacts.length) return
+
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('Usuário não autenticado')
+
+      // Preparar dados para inserção em massa
+      const contactsToInsert = contacts.map(contact => ({
+        user_id: user.id,
+        instance_id: instanceId,
+        phone_number: contact.number.replace(/\D/g, ''), // Remove caracteres não numéricos
+        name: contact.name || null,
+        profile_pic_url: contact.profilePic || null,
+        is_group: contact.isGroup || false,
+        tags: [],
+        created_at: new Date().toISOString()
+      }))
+
+      // Inserir em massa, ignorando duplicatas
+      const { error } = await supabase
+        .from('contacts')
+        .insert(contactsToInsert)
+        .select()
+
+      if (error) {
+        // Se for erro de duplicata, tentar atualizar existentes
+        if (error.code === '23505') {
+          console.log('Alguns contatos já existem, atualizando...')
+          // Atualizar contatos existentes
+          for (const contact of contactsToInsert) {
+            await supabase
+              .from('contacts')
+              .update({
+                name: contact.name,
+                profile_pic_url: contact.profile_pic_url,
+                is_group: contact.is_group
+              })
+              .eq('instance_id', contact.instance_id)
+              .eq('phone_number', contact.phone_number)
+          }
+        } else {
+          throw error
+        }
+      }
+
+      console.log(`✅ ${contacts.length} contatos salvos/atualizados no banco`)
+      toast({ title: 'Contatos sincronizados', description: `${contacts.length} contatos foram salvos com sucesso.` })
+      
+    } catch (error: any) {
+      console.error('Erro ao salvar contatos no banco:', error)
+      toast({ title: 'Erro ao sincronizar contatos', description: error.message, variant: 'destructive' })
+    }
+  }, [toast])
+
+  // Função aprimorada para buscar e salvar contatos
+  const fetchContactsAndSave = useCallback(async (targetInstance: WhatsAppInstance) => {
+    try {
+      const contacts = await fetchContacts(targetInstance)
+      if (contacts && contacts.length > 0) {
+        await saveContactsToDatabase(contacts, targetInstance.id)
+      }
+      return contacts
+    } catch (error: any) {
+      toast({ title: 'Erro ao sincronizar contatos', description: error.message, variant: 'destructive' })
+      return []
+    }
+  }, [fetchContacts, saveContactsToDatabase, toast])
+
   // Adiciona função para buscar eventos recentes de uma instância
   // Retorna últimos N eventos da tabela webhook_events, filtrando por nome da instância (api_key ou name)
   // Uso: getRecentEvents(instance, 10)
@@ -278,6 +411,12 @@ export function useEvolutionApi() {
         if (newStatus && newStatus !== oldStatus) {
           if (newStatus === 'connected') {
             toast({ title: 'Instância conectada', description: 'Webhook atualizou o status para conectado.' })
+            // Buscar contatos automaticamente quando conectar
+            const connectedInstance = instances.find(i => i.id === newRow.id)
+            if (connectedInstance) {
+              console.log('📞 Instância conectada! Buscando contatos automaticamente...')
+              fetchContactsAndSave(connectedInstance).catch(console.error)
+            }
           } else if (newStatus === 'connecting') {
             toast({ title: 'Instância em conexão', description: 'Aguardando leitura do QR Code.' })
           } else if (newStatus === 'disconnected') {
@@ -344,12 +483,14 @@ export function useEvolutionApi() {
     messages,
     pairingCodes,
     loadInstances,
+    sendMedia,
     createInstance,
     connect,
     disconnect,
     checkConnectionStatus,
     deleteInstance,
     fetchContacts,
+    fetchContactsAndSave,
     fetchMessages,
     sendMessage,
     getRecentEvents,

@@ -25,6 +25,7 @@ import QuotaManagementPage from './pages/QuotaManagement'
 import { Suspense, lazy } from 'react'
 import NotFoundPage from '@/pages/NotFound'
 import DevErrorPage from '@/pages/DevError'
+const DevMediaUploadPage = lazy(() => import('./pages/DevMediaUpload'))
 const RoleManagementPage = lazy(() => import('./pages/RoleManagement').then(m => ({ default: m.RoleManagement })))
 // RoleManagement page is lazy-loaded below
 import RequireAuth from '@/components/auth/RequireAuth'
@@ -93,6 +94,9 @@ function App() {
             <Route path="/unauthorized" element={<UnauthorizedPage />} />
             {import.meta.env.DEV && (
               <Route path="/dev/error" element={<DevErrorPage />} />
+            )}
+            {import.meta.env.DEV && (
+              <Route path="/dev/media" element={<Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Carregando...</div>}><DevMediaUploadPage /></Suspense>} />
             )}
             {/* Catch-all para rotas desconhecidas */}
             <Route path="*" element={<NotFoundPage />} />

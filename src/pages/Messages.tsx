@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -50,6 +50,7 @@ import { supabase } from '@/lib/supabase'
 import { evolutionApi } from '@/services/evolutionApi'
 import { useMessages } from '@/hooks/useMessages'
 import { MediaUpload, BulkMessageDialog } from '@/components/MediaUpload'
+import { MediaUploadButton } from '@/components/MediaUploadButton'
 import { MediaFile } from '@/hooks/useMessages'
 import { useTenant } from '@/hooks/useTenant'
 import { useRateLimit } from '@/hooks/useRateLimit'
@@ -57,6 +58,7 @@ import { useQuotas } from '@/hooks/useQuotas'
 import { QuotaAlertsManager } from '@/components/QuotaAlertsManager'
 import { GatingBanner } from '@/components/GatingBanner'
 import { formatRelativeTime } from '@/lib/utils'
+import { useEvolutionApi } from '@/hooks/useEvolutionApi'
 
 interface Message {
   id: string
@@ -103,6 +105,10 @@ export default function Messages() {
   const { isFeatureBlocked, getResourceUsage } = useQuotas()
   const messagesFeatureBlocked = isFeatureBlocked('messages')
   const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null)
+  const { instances, sendMedia } = useEvolutionApi()
+  const activeInstance = useMemo(() => {
+    return instances.find(i => i.id === activeInstanceId) || null
+  }, [instances, activeInstanceId])
   const sendRateStatus = getRateStatus('instance', activeInstanceId || undefined) || getRateStatus('global')
   const campaignsUsage = getResourceUsage('campaigns')
   const criticalState = (campaignsUsage as any)?.status === 'critical'
@@ -704,9 +710,12 @@ export default function Messages() {
                   </div>
                 )}
                 <div className="flex items-center space-x-2">
-                  <Button variant="ghost" size="sm">
-                    <Paperclip className="w-4 h-4" />
-                  </Button>
+                  <MediaUploadButton
+                    contactNumber={selectedContact!}
+                    instance={activeInstance as any}
+                    sendMedia={sendMedia as any}
+                    disabled={sending || messagesFeatureBlocked}
+                  />
                   <div className="flex-1 relative">
                     <Input
                       placeholder="Digite sua mensagem..."
