@@ -151,8 +151,9 @@ export function AnalyticsDashboard() {
     }
   }
 
-  const handleRefresh = () => {
-    loadData()
+  const handleRefresh = async () => {
+    await loadData()
+    toast.success('Dashboard atualizado')
   }
 
   const handleExport = async (format: 'excel' | 'csv' | 'pdf') => {
@@ -197,7 +198,6 @@ export function AnalyticsDashboard() {
         await exportToPDF(data, ['Métrica', 'Valor', 'Período'], filename, 'Relatório de Analytics')
         break
     }
-  }  toast.success('Dashboard atualizado')
   }
 
   const handleExport = (format: 'pdf' | 'excel' | 'csv') => {

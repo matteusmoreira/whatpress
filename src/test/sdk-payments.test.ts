@@ -407,3 +407,6 @@ describe('WhatPressSDK - Pagamentos', () => {
 
       expect(global.fetch).toHaveBeenCalledTimes(2)
       expect(result).toEqual(mockResponse)
+    })
+  })
+})

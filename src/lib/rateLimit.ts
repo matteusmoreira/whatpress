@@ -430,3 +430,62 @@ export default {
   isRedisAvailable,
   getGlobalRateLimitStats,
 }
+
+export interface RateLimitInfo {
+  limit: number
+  current: number
+  remaining: number
+  resetTime: Date
+}
+
+const CLIENT_CONFIG_MAP: Record<string, keyof typeof rateLimiters> = {
+  api_general: 'byIP',
+  message_send: 'messageSending',
+  bulk_message: 'messageSending',
+  authentication: 'loginAttempts',
+  password_reset: 'loginAttempts',
+  file_upload: 'fileUpload',
+  template_creation: 'byUser',
+}
+
+export const rateLimitService = {
+  getConfig: (name: string) => {
+    const type = CLIENT_CONFIG_MAP[name] || 'byIP'
+    const cfg = (rateLimitConfig as any)[type]
+    return {
+      name,
+      points: cfg.points,
+      duration: cfg.duration,
+      blockDuration: cfg.blockDuration,
+    }
+  },
+  getAllConfigs: () => {
+    return Object.keys(CLIENT_CONFIG_MAP).map(name => {
+      const type = CLIENT_CONFIG_MAP[name]
+      const cfg = (rateLimitConfig as any)[type]
+      return {
+        name,
+        points: cfg.points,
+        duration: cfg.duration,
+        blockDuration: cfg.blockDuration,
+      }
+    })
+  },
+  checkRateLimit: async (
+    key: string,
+    configName: string,
+    _userId?: string,
+    _tenantId?: string
+  ): Promise<{ allowed: boolean; info: RateLimitInfo }> => {
+    const type = CLIENT_CONFIG_MAP[configName] || 'byIP'
+    const res = await checkRateLimit(type, key, 1)
+    const limiter = getRateLimiter(type)
+    const info: RateLimitInfo = {
+      limit: limiter.points,
+      current: Math.max(0, limiter.points - res.remainingPoints),
+      remaining: res.remainingPoints,
+      resetTime: new Date(Date.now() + res.msBeforeNext),
+    }
+    return { allowed: res.allowed, info }
+  }
+}

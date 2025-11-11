@@ -8,7 +8,6 @@ import { useConsent } from '@/hooks/useConsent'
 import { useCache } from './useCache'
 import { monitorAPIRequest, monitorDatabaseQuery } from '@/lib/monitoring'
 import { executeWithRetryAndCircuitBreaker, defaultCircuitBreakerConfigs } from '@/lib/circuitBreaker'
-import { addQueueJob } from '@/lib/queue'
 
 export interface MediaFile {
   file: File
@@ -54,8 +53,8 @@ export const useMessages = () => {
   // Cache para mensagens recentes
   const { 
     data: cachedRecentMessages, 
-    mutate: mutateRecentMessages,
-    isLoading: messagesLoading 
+    mutate: mutateRecentMessages, 
+    loading: messagesLoading 
   } = useCache(
     user ? `messages:recent:${currentTenant?.id ?? user.id}` : '',
     async () => {

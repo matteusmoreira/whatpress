@@ -1,5 +1,66 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { cacheUtils, distributedUtils } from '@/lib/redis'
+import * as Sentry from '@sentry/react'
+const memoryCache = new Map<string, { v: any; e?: number }>()
+const locks = new Map<string, number>()
+const counters = new Map<string, number>()
+
+const cacheUtils = {
+  async setWithTTL(key: string, value: any, ttl: number) {
+    const expires = ttl > 0 ? Date.now() + ttl * 1000 : undefined
+    memoryCache.set(key, { v: value, e: expires })
+  },
+  async get<T = any>(key: string): Promise<T | null> {
+    const entry = memoryCache.get(key)
+    if (!entry) return null
+    if (entry.e && entry.e <= Date.now()) {
+      memoryCache.delete(key)
+      return null
+    }
+    return entry.v as T
+  },
+  async del(key: string) {
+    memoryCache.delete(key)
+  },
+  async delByPattern(pattern: string) {
+    let deleted = 0
+    const matcher = (k: string) => (pattern.includes('*') ? new RegExp('^' + pattern.replace(/\*/g, '.*') + '$') : null)
+    const rx = matcher(pattern)
+    for (const k of Array.from(memoryCache.keys())) {
+      const match = rx ? rx.test(k) : k.includes(pattern)
+      if (match) {
+        memoryCache.delete(k)
+        deleted++
+      }
+    }
+    return deleted
+  },
+  async getStats() {
+    return { keys: memoryCache.size }
+  },
+  async flushAll() {
+    memoryCache.clear()
+  },
+}
+
+const distributedUtils = {
+  async incrementRequest(key: string, windowSeconds = 60) {
+    const windowId = Math.floor(Date.now() / (windowSeconds * 1000))
+    const k = `${key}:${windowId}`
+    const v = (counters.get(k) || 0) + 1
+    counters.set(k, v)
+    return v
+  },
+  async acquireLock(key: string, ttlMs = 30000) {
+    const now = Date.now()
+    const exp = locks.get(key)
+    if (exp && exp > now) return false
+    locks.set(key, now + ttlMs)
+    return true
+  },
+  async releaseLock(key: string) {
+    locks.delete(key)
+  },
+}
 import { monitorCacheOperation } from '@/lib/monitoring'
 
 interface CacheOptions {

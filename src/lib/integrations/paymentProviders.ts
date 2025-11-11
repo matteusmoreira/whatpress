@@ -43,8 +43,9 @@ export interface PaymentProviderConfig {
     webhook_secret?: string
     sandbox: boolean
     currency: string
-    country: string
+  country: string
   }
+
   status: 'active' | 'inactive' | 'testing' | 'error'
   test_result?: {
     success: boolean
@@ -898,3 +899,4 @@ export class PaymentService {
       }
     }
   }
+}

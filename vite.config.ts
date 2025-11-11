@@ -24,6 +24,9 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  optimizeDeps: {
+    exclude: ['ioredis', 'redis', 'bullmq']
+  },
   build: {
     rollupOptions: {
       onwarn(warning, warn) {

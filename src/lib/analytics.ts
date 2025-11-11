@@ -129,6 +129,16 @@ export class AnalyticsService {
 
   constructor() {
     this.initializeSession()
+    if (typeof window !== 'undefined') {
+      try {
+        window.addEventListener('tenant:changed', (e: Event) => {
+          try {
+            const id = (e as CustomEvent<string>).detail
+            this.tenantId = id
+          } catch {}
+        })
+      } catch {}
+    }
   }
 
   private initializeSession() {
@@ -137,7 +147,7 @@ export class AnalyticsService {
     // Recuperar IDs do localStorage/Supabase
     if (typeof window !== 'undefined') {
       this.userId = localStorage.getItem('userId')
-      this.tenantId = localStorage.getItem('tenantId')
+      this.tenantId = localStorage.getItem('selected_tenant_id') || localStorage.getItem('tenantId')
     }
   }
 
@@ -223,7 +233,11 @@ export class AnalyticsService {
     this.tenantId = tenantId
     
     if (typeof window !== 'undefined') {
+      localStorage.setItem('selected_tenant_id', tenantId)
       localStorage.setItem('tenantId', tenantId)
+      try {
+        window.dispatchEvent(new CustomEvent('tenant:changed', { detail: tenantId }))
+      } catch {}
     }
   }
 

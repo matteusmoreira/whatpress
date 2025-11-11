@@ -39,6 +39,8 @@ import {
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useTenants } from '@/hooks/useTenants'
+import { useTenant } from '@/hooks/useTenant'
+import { useNavigate } from 'react-router-dom'
 import { useQuotas } from '@/hooks/useQuotas'
 import { QuotaGrid, QuotaProgress } from '@/components/ui/quota-progress'
 import { SuperAdminOnly } from '@/components/RoleGuard'
@@ -113,7 +115,9 @@ export default function SuperAdmin() {
   })
   const [isQuotaDialogOpen, setIsQuotaDialogOpen] = useState(false)
 
-  const { tenants, selectedTenantId, selectTenant, createTenant, loadMyTenants, loading, error } = useTenants()
+  const { tenants, selectedTenantId, createTenant, loadMyTenants, loading, error } = useTenants()
+  const { switchTenant } = useTenant()
+  const navigate = useNavigate()
   const { logAction } = useRoleContext()
 
   // Carregar dados de quotas de todos os tenants
@@ -487,10 +491,10 @@ export default function SuperAdmin() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem>Ver Detalhes</DropdownMenuItem>
-                            <DropdownMenuItem>Editar</DropdownMenuItem>
-                            <DropdownMenuItem>Configurações</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => selectTenant(tenant.id)}>Selecionar contexto</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => navigate(`/superadmin/tenant/${tenant.id}`)}>Ver Detalhes</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => navigate(`/superadmin/tenant/${tenant.id}`)}>Editar</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => navigate(`/superadmin/tenant/${tenant.id}?tab=settings`)}>Configurações</DropdownMenuItem>
+                            <DropdownMenuItem onClick={async () => { await switchTenant(tenant.id); navigate('/dashboard') }}>Selecionar contexto</DropdownMenuItem>
                             <DropdownMenuItem className="text-red-600">Suspender</DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>

@@ -1,4 +1,4 @@
-import { Queue, Worker, Job, QueueScheduler } from 'bullmq'
+import { Queue, Worker, Job } from 'bullmq'
 import { redisQueue } from './redis'
 import { monitorQueueJob } from './monitoring'
 import { executeWithRetryAndCircuitBreaker, defaultCircuitBreakerConfigs } from './circuitBreaker'
@@ -96,14 +96,11 @@ export const campaignQueue = new Queue('campaigns', queueConfig)
 export const webhookQueue = new Queue('webhooks', queueConfig)
 export const cleanupQueue = new Queue('cleanup', queueConfig)
 export const backupQueue = new Queue('backup', queueConfig)
+export const bulkQueue = new Queue('bulk', queueConfig)
+export const templateQueue = new Queue('template', queueConfig)
+export const flowExecutionQueue = new Queue('flow_execution', queueConfig)
 
-// Criar schedulers para as filas (necessário para delays e retries)
-export const messageScheduler = new QueueScheduler('messages', { connection: redisQueue })
-export const mediaScheduler = new QueueScheduler('media', { connection: redisQueue })
-export const campaignScheduler = new QueueScheduler('campaigns', { connection: redisQueue })
-export const webhookScheduler = new QueueScheduler('webhooks', { connection: redisQueue })
-export const cleanupScheduler = new QueueScheduler('cleanup', { connection: redisQueue })
-export const backupScheduler = new QueueScheduler('backup', { connection: redisQueue })
+// BullMQ v4 não requer QueueScheduler; delays e retries são geridos pelo próprio Queue
 
 // Processadores de jobs
 export const createWorkers = () => {
@@ -419,7 +416,51 @@ export default {
   webhookQueue,
   cleanupQueue,
   backupQueue,
+  bulkQueue,
+  templateQueue,
+  flowExecutionQueue,
   queueUtils,
   initializeWorkers,
   cleanupQueues
+}
+
+export const QUEUE_TYPES = {
+  MESSAGE: 'messages',
+  MEDIA: 'media',
+  CAMPAIGN: 'campaigns',
+  WEBHOOK: 'webhooks',
+  BULK: 'bulk',
+  TEMPLATE: 'template',
+  FLOW_EXECUTION: 'flow_execution',
+} as const
+
+export async function addQueueJob(
+  queue: keyof typeof QUEUE_TYPES | string,
+  nameOrData: string | Record<string, any>,
+  data?: Record<string, any>,
+  options: any = {}
+): Promise<Job> {
+  const queueName = typeof queue === 'string' ? queue : QUEUE_TYPES[queue as keyof typeof QUEUE_TYPES]
+
+  const queueMap: Record<string, Queue> = {
+    messages: messageQueue,
+    media: mediaQueue,
+    campaigns: campaignQueue,
+    webhooks: webhookQueue,
+    cleanup: cleanupQueue,
+    backup: backupQueue,
+    bulk: bulkQueue,
+    template: templateQueue,
+    flow_execution: flowExecutionQueue,
+  }
+
+  const selected = queueMap[queueName]
+  if (!selected) {
+    throw new Error(`Fila desconhecida: ${queueName}`)
+  }
+
+  const name = typeof nameOrData === 'string' ? nameOrData : 'job'
+  const payload = typeof nameOrData === 'string' ? (data || {}) : nameOrData
+
+  return await selected.add(name, payload, options)
 }

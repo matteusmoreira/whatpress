@@ -7,6 +7,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout'
 import DashboardPage from '@/pages/Dashboard'
 import SuperAdminLayout from '@/components/layout/SuperAdminLayout'
 import SuperAdminPage from '@/pages/SuperAdmin'
+import TenantPage from '@/pages/Tenant'
 import ContactsPage from '@/pages/Contacts'
 import CampaignsPage from '@/pages/Campaigns'
 import CreateCampaignPage from '@/pages/CreateCampaign'
@@ -94,6 +95,7 @@ function App() {
               </RequireAuth>
             }>
               <Route index element={<SuperAdminPage />} />
+              <Route path="tenant/:id" element={<TenantPage />} />
               {/* Rota de teste de erro controlado (apenas SUPERADMIN) */}
               <Route path="test-error" element={<DevErrorPage />} />
             </Route>

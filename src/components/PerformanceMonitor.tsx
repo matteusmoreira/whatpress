@@ -3,7 +3,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { AlertCircle, CheckCircle, Clock, Database, Globe, Server } from 'lucide-react'
 import { getSystemHealth } from '@/lib/monitoring'
-import { redis } from '@/lib/redis'
 
 interface SystemHealth {
   status: 'healthy' | 'degraded' | 'unhealthy'

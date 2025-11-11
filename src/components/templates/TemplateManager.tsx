@@ -436,7 +436,7 @@ export function TemplateManager({
                       {formData.variables.map((variable, index) => (
                         <div key={index} className="flex items-center gap-2 text-sm">
                           <span className="font-mono bg-gray-100 px-2 py-1 rounded">
-                            {{variable.name}}
+                            {variable.name}
                           </span>
                           <select
                             value={variable.type}
@@ -638,7 +638,7 @@ export function TemplateManager({
                     <div className="flex flex-wrap gap-1 mt-1">
                       {template.variables.map(variable => (
                         <Badge key={variable.name} variant="outline" className="text-xs">
-                          {{variable.name}}
+                          {variable.name}
                         </Badge>
                       ))}
                     </div>

@@ -29,7 +29,7 @@ interface SecuritySettings {
   retention_days: number;
 }
 
-interface ConsentSettings {
+interface ConsentConfig {
   show_consent_banner: boolean;
   require_consent_for_messages: boolean;
   require_consent_for_marketing: boolean;
@@ -59,7 +59,7 @@ export default function SecuritySettingsPage() {
     retention_days: 90
   });
 
-  const [consentConfig, setConsentConfig] = useState<ConsentSettings>({
+  const [consentConfig, setConsentConfig] = useState<ConsentConfig>({
     show_consent_banner: true,
     require_consent_for_messages: true,
     require_consent_for_marketing: true,
@@ -165,7 +165,7 @@ export default function SecuritySettingsPage() {
     }
   };
 
-  const saveConsentSettings = async () => {
+  const saveConsentConfig = async () => {
     if (!currentTenant?.id) return;
 
     setSaving(true);
@@ -282,7 +282,7 @@ export default function SecuritySettingsPage() {
         <Button
           onClick={() => {
             saveSecuritySettings();
-            saveConsentSettings();
+            saveConsentConfig();
           }}
           disabled={saving}
           className="flex items-center gap-2"

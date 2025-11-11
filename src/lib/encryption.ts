@@ -40,6 +40,10 @@ class EncryptionService {
     this.initializeMasterKey()
   }
 
+  isEnabled(): boolean {
+    return this.masterKey !== null
+  }
+
   private async initializeMasterKey(): Promise<void> {
     try {
       const masterKeyData = process.env.VITE_MASTER_ENCRYPTION_KEY
@@ -376,5 +380,17 @@ class EncryptionService {
 
 // Singleton instance
 export const encryptionService = new EncryptionService()
+
+export const getEncryptionService = () => {
+  return {
+    isEnabled: () => encryptionService.isEnabled(),
+    encryptData: async (content: string) => {
+      return encryptionService.encryptField(content, 'system', 'system')
+    },
+    decryptData: async (encryptedField: string) => {
+      return encryptionService.decryptField(encryptedField, 'system', 'system')
+    }
+  }
+}
 
 export default encryptionService

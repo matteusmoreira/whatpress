@@ -41,14 +41,17 @@ export function useTenants() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const selectedTenantId = useMemo(() => {
-    if (typeof window === 'undefined') return null
-    return localStorage.getItem(STORAGE_KEY)
-  }, [])
+  const [selectedTenantId, setSelectedTenantId] = useState<string | null>(
+    typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null
+  )
 
   const selectTenant = useCallback((tenantId: string) => {
     if (typeof window === 'undefined') return
     localStorage.setItem(STORAGE_KEY, tenantId)
+    setSelectedTenantId(tenantId)
+    try {
+      window.dispatchEvent(new CustomEvent('tenant:changed', { detail: tenantId }))
+    } catch {}
   }, [])
 
   const loadMyTenants = useCallback(async () => {
@@ -157,6 +160,27 @@ export function useTenants() {
   useEffect(() => {
     loadMyTenants()
   }, [loadMyTenants])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY) {
+        setSelectedTenantId(e.newValue)
+      }
+    }
+    const onChanged = (e: Event) => {
+      try {
+        const id = (e as CustomEvent<string>).detail
+        setSelectedTenantId(id)
+      } catch {}
+    }
+    window.addEventListener('storage', onStorage)
+    window.addEventListener('tenant:changed', onChanged as EventListener)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener('tenant:changed', onChanged as EventListener)
+    }
+  }, [])
 
   return {
     tenants,

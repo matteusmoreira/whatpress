@@ -139,6 +139,11 @@ export const useTenant = (): UseTenantReturn => {
 
     setCurrentTenant(tenant);
     localStorage.setItem(STORAGE_KEY, tenantId);
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('tenant:changed', { detail: tenantId }));
+      } catch {}
+    }
   }, [tenants]);
 
   // Recarregar tenants
@@ -151,6 +156,30 @@ export const useTenant = (): UseTenantReturn => {
   useEffect(() => {
     fetchTenants();
   }, [fetchTenants]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY) {
+        const id = e.newValue || '';
+        const found = tenants.find(t => t.id === id) || null;
+        setCurrentTenant(found);
+      }
+    };
+    const onChanged = (e: Event) => {
+      try {
+        const id = (e as CustomEvent<string>).detail;
+        const found = tenants.find(t => t.id === id) || null;
+        setCurrentTenant(found);
+      } catch {}
+    };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('tenant:changed', onChanged as EventListener);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('tenant:changed', onChanged as EventListener);
+    };
+  }, [tenants]);
 
   return {
     currentTenant,
