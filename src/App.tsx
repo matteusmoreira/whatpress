@@ -20,6 +20,8 @@ import SchedulingPage from './pages/Scheduling'
 import NotificationsPage from './pages/Notifications'
 import MessagesPage from './pages/Messages'
 import SettingsPage from './pages/Settings'
+import SecuritySettingsPage from './pages/SecuritySettings'
+import { Security } from './pages/Security'
 import SupportPage from './pages/Support'
 import QuotaManagementPage from './pages/QuotaManagement'
 import { Suspense, lazy } from 'react'
@@ -36,6 +38,7 @@ import { AdminOnly, SuperAdminOnly } from '@/components/RoleGuard'
 import UnauthorizedPage from '@/pages/Unauthorized'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import OfflineBanner from '@/components/OfflineBanner'
+import { ConsentBanner } from '@/components/consent-banner'
 
 function App() {
   return (
@@ -60,6 +63,7 @@ function App() {
             <Route path="/dashboard" element={
               <RequireAuth>
                 <DashboardLayout />
+                <ConsentBanner />
               </RequireAuth>
             }>
               <Route index element={<DashboardPage />} />
@@ -78,6 +82,8 @@ function App() {
               <Route path="quotas" element={<AdminOnly redirectTo="/unauthorized" showError={false}><QuotaManagementPage /></AdminOnly>} />
               <Route path="roles" element={<AdminOnly redirectTo="/unauthorized" showError={false}><Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Carregando...</div>}><RoleManagementPage /></Suspense></AdminOnly>} />
               <Route path="settings" element={<SettingsPage />} />
+              <Route path="settings/security" element={<SecuritySettingsPage />} />
+              <Route path="security" element={<Security />} />
               <Route path="support" element={<SupportPage />} />
             </Route>
             <Route path="/superadmin" element={

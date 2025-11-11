@@ -532,10 +532,18 @@ export default function Settings() {
                 </div>
               </div>
 
-              <div className="flex justify-end">
+              <div className="flex justify-between items-center">
                 <Button onClick={() => handleSave('segurança')} disabled={loading}>
                   {loading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
                   Salvar Configurações
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => window.location.href = '/dashboard/settings/security'}
+                  className="flex items-center gap-2"
+                >
+                  <Shield className="h-4 w-4" />
+                  Configurações Avançadas
                 </Button>
               </div>
             </CardContent>

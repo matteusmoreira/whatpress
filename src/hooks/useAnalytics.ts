@@ -1,495 +1,392 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
-import { useAuth } from '@/hooks/useAuth'
+import { monitorFunction } from '@/lib/monitoring'
+import { useAuth } from './useAuth'
+import { useTenant } from './useTenant'
+import { analytics, AnalyticsEvent, ANALYTICS_EVENTS } from '@/lib/analytics'
+import { getPredictiveAnalyticsService, PredictionResult } from '@/lib/predictiveAnalytics'
 import { toast } from 'sonner'
-import { format, subDays, startOfDay, endOfDay } from 'date-fns'
-import { useTenant } from '@/hooks/useTenant'
+import * as XLSX from 'xlsx'
+import jsPDF from 'jspdf'
+import 'jspdf-autotable'
 
-export interface AnalyticsMetrics {
-  totalMessages: number
-  messagesChange: number
-  deliveryRate: number
-  deliveryRateChange: number
-  responseRate: number
-  responseRateChange: number
-  activeContacts: number
-  activeContactsChange: number
+// Interfaces para métricas
+export interface MetricData {
+  label: string
+  value: number
+  change?: number
+  trend?: 'up' | 'down' | 'stable'
+  color?: string
+  icon?: string
 }
 
-export interface MessageVolumeData {
+export interface TimeSeriesData {
   date: string
-  sent: number
-  received: number
+  value: number
+  [key: string]: any
 }
 
-export interface CampaignPerformanceData {
-  name: string
-  sent: number
+export interface CampaignMetrics {
+  totalSent: number
   delivered: number
   opened: number
   clicked: number
-  status: 'active' | 'paused' | 'completed'
+  replied: number
+  failed: number
+  conversionRate: number
+  engagementRate: number
+  costPerMessage: number
+  roi: number
 }
 
-export interface AudienceSegmentData {
-  device: Array<{ name: string; value: number }>
-  location: Array<{ name: string; value: number }>
+export interface ContactMetrics {
+  totalContacts: number
+  activeContacts: number
+  newContacts: number
+  unsubscribed: number
+  segments: Array<{ name: string; count: number }>
+  growthRate: number
 }
 
-export interface ResponseTimeData {
-  date: string
-  averageTime: number
+export interface FlowMetrics {
+  totalFlows: number
+  activeFlows: number
+  totalExecutions: number
+  successfulExecutions: number
+  failedExecutions: number
+  averageExecutionTime: number
+  topFlows: Array<{ name: string; executions: number; successRate: number }>
 }
 
-export interface RealTimeMetrics {
-  messagesLastHour: number
-  activeChats: number
-  responseTime: string
-  onlineAgents: number
+export interface RevenueMetrics {
+  totalRevenue: number
+  monthlyRecurringRevenue: number
+  newRevenue: number
+  churnedRevenue: number
+  averageRevenuePerUser: number
+  customerLifetimeValue: number
+  revenueGrowth: number
 }
 
-export interface AnalyticsFilters {
-  period: '7d' | '30d' | '90d' | 'custom'
-  startDate?: Date
-  endDate?: Date
+export interface EngagementMetrics {
+  openRate: number
+  clickRate: number
+  replyRate: number
+  unsubscribeRate: number
+  bounceRate: number
+  spamRate: number
+  engagementScore: number
 }
 
-export interface ExportOptions {
-  format: 'pdf' | 'excel' | 'csv'
-  includeCharts: boolean
-  includeRawData: boolean
-  dateRange: {
-    start: Date
-    end: Date
+export interface ChannelMetrics {
+  whatsapp: {
+    sent: number
+    delivered: number
+    read: number
+    replied: number
+    failed: number
+  }
+  email: {
+    sent: number
+    delivered: number
+    opened: number
+    clicked: number
+    bounced: number
+    complained: number
+  }
+  sms: {
+    sent: number
+    delivered: number
+    failed: number
   }
 }
 
+// Hook principal para analytics
 export function useAnalytics() {
   const { user } = useAuth()
-  const { currentTenant } = useTenant()
-  const tenantId = currentTenant?.id
-  const [metrics, setMetrics] = useState<AnalyticsMetrics | null>(null)
-  const [messageVolumeData, setMessageVolumeData] = useState<MessageVolumeData[]>([])
-  const [campaignPerformanceData, setCampaignPerformanceData] = useState<CampaignPerformanceData[]>([])
-  const [audienceSegmentData, setAudienceSegmentData] = useState<AudienceSegmentData | null>(null)
-  const [responseTimeData, setResponseTimeData] = useState<ResponseTimeData[]>([])
-  const [filters, setFilters] = useState<AnalyticsFilters>({
-    period: '30d'
-  })
-  const [loading, setLoading] = useState(false)
+  const { tenant } = useTenant()
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  // Calculate date range based on period
-  const getDateRange = useCallback(() => {
-    const end = new Date()
-    let start: Date
-
-    switch (filters.period) {
-      case '7d':
-        start = subDays(end, 7)
-        break
-      case '30d':
-        start = subDays(end, 30)
-        break
-      case '90d':
-        start = subDays(end, 90)
-        break
-      case 'custom':
-        start = filters.startDate || subDays(end, 30)
-        break
-      default:
-        start = subDays(end, 30)
-    }
-
-    return { start: startOfDay(start), end: endOfDay(end) }
-  }, [filters])
-
-  // Fetch analytics metrics
-  const fetchMetrics = useCallback(async () => {
-    if (!user) return
-
-    try {
-      setLoading(true)
-      const { start, end } = getDateRange()
-
-      // Fetch current period metrics
-      const msgsQuery = supabase
-        .from('messages')
-        .select('*')
-        .gte('created_at', start.toISOString())
-        .lte('created_at', end.toISOString())
-
-      const currentMessagesRes = tenantId
-        ? await msgsQuery.eq('tenant_id', tenantId)
-        : await msgsQuery.eq('user_id', user.id)
-      const { data: currentMessages } = currentMessagesRes
-
-      const contactsQuery = supabase
-        .from('contacts')
-        .select('*')
-        .gte('last_interaction', start.toISOString())
-
-      const currentContactsRes = tenantId
-        ? await contactsQuery.eq('tenant_id', tenantId)
-        : await contactsQuery.eq('user_id', user.id)
-      const { data: currentContacts } = currentContactsRes
-
-      // Calculate previous period for comparison
-      const periodDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
-      const prevStart = subDays(start, periodDays)
-      const prevEnd = subDays(end, periodDays)
-
-      const prevMsgsQuery = supabase
-        .from('messages')
-        .select('*')
-        .gte('created_at', prevStart.toISOString())
-        .lte('created_at', prevEnd.toISOString())
-
-      const prevMessagesRes = tenantId
-        ? await prevMsgsQuery.eq('tenant_id', tenantId)
-        : await prevMsgsQuery.eq('user_id', user.id)
-      const { data: prevMessages } = prevMessagesRes
-
-      const prevContactsQuery = supabase
-        .from('contacts')
-        .select('*')
-        .gte('last_interaction', prevStart.toISOString())
-        .lte('last_interaction', prevEnd.toISOString())
-
-      const prevContactsRes = tenantId
-        ? await prevContactsQuery.eq('tenant_id', tenantId)
-        : await prevContactsQuery.eq('user_id', user.id)
-      const { data: prevContacts } = prevContactsRes
-
-      // Calculate metrics
-      const totalMessages = currentMessages?.length || 0
-      const prevTotalMessages = prevMessages?.length || 0
-      const messagesChange = prevTotalMessages > 0 
-        ? ((totalMessages - prevTotalMessages) / prevTotalMessages) * 100 
-        : 0
-
-      const deliveredMessages = currentMessages?.filter(m => m.status === 'delivered').length || 0
-      const deliveryRate = totalMessages > 0 ? (deliveredMessages / totalMessages) * 100 : 0
-      
-      const prevDeliveredMessages = prevMessages?.filter(m => m.status === 'delivered').length || 0
-      const prevDeliveryRate = prevTotalMessages > 0 ? (prevDeliveredMessages / prevTotalMessages) * 100 : 0
-      const deliveryRateChange = prevDeliveryRate > 0 
-        ? ((deliveryRate - prevDeliveryRate) / prevDeliveryRate) * 100 
-        : 0
-
-      const respondedMessages = currentMessages?.filter(m => m.type === 'received').length || 0
-      const responseRate = totalMessages > 0 ? (respondedMessages / totalMessages) * 100 : 0
-      
-      const prevRespondedMessages = prevMessages?.filter(m => m.type === 'received').length || 0
-      const prevResponseRate = prevTotalMessages > 0 ? (prevRespondedMessages / prevTotalMessages) * 100 : 0
-      const responseRateChange = prevResponseRate > 0 
-        ? ((responseRate - prevResponseRate) / prevResponseRate) * 100 
-        : 0
-
-      const activeContacts = currentContacts?.length || 0
-      const prevActiveContacts = prevContacts?.length || 0
-      const activeContactsChange = prevActiveContacts > 0 
-        ? ((activeContacts - prevActiveContacts) / prevActiveContacts) * 100 
-        : 0
-
-      setMetrics({
-        totalMessages,
-        messagesChange,
-        deliveryRate: Math.round(deliveryRate),
-        deliveryRateChange,
-        responseRate: Math.round(responseRate),
-        responseRateChange,
-        activeContacts,
-        activeContactsChange
+  // Identificar usuário automaticamente
+  useEffect(() => {
+    if (user?.id) {
+      analytics.identify(user.id, {
+        email: user.email,
+        name: user.name,
+        tenantId: tenant?.id
       })
-
-    } catch (error) {
-      console.error('Error fetching analytics metrics:', error)
-      toast.error('Erro ao carregar métricas')
-    } finally {
-      setLoading(false)
     }
-  }, [user, getDateRange, tenantId])
 
-  // Fetch message volume data
-  const fetchMessageVolumeData = useCallback(async () => {
-    if (!user) return
+    if (tenant?.id) {
+      analytics.setTenant(tenant.id)
+    }
+  }, [user, tenant])
 
+  // Rastrear evento
+  const track = useCallback(async (event: AnalyticsEvent, properties: Record<string, any> = {}) => {
     try {
-      const { start, end } = getDateRange()
-      
-      const msgsQuery = supabase
-        .from('messages')
-        .select('created_at, type')
-        .gte('created_at', start.toISOString())
-        .lte('created_at', end.toISOString())
-        .order('created_at')
+      await analytics.track(event, properties)
+    } catch (error) {
+      console.error('Erro ao rastrear evento:', error)
+      // Silenciosamente falhar - não quebrar a aplicação
+    }
+  }, [])
 
-      const { data: messages } = tenantId
-        ? await msgsQuery.eq('tenant_id', tenantId)
-        : await msgsQuery.eq('user_id', user.id)
+  // Rastrear página
+  const trackPage = useCallback(async (pageName: string, properties: Record<string, any> = {}) => {
+    try {
+      await analytics.page(pageName, properties)
+    } catch (error) {
+      console.error('Erro ao rastrear página:', error)
+    }
+  }, [])
 
-      // Group messages by date
-      const volumeMap = new Map<string, { sent: number; received: number }>()
-      
-      messages?.forEach(message => {
-        const date = format(new Date(message.created_at), 'yyyy-MM-dd')
-        const current = volumeMap.get(date) || { sent: 0, received: 0 }
-        
-        if (message.type === 'sent') {
-          current.sent++
-        } else if (message.type === 'received') {
-          current.received++
+  // Obter métricas de campanhas
+  const getCampaignMetrics = useCallback(async (
+    dateRange?: { start: Date; end: Date },
+    campaignIds?: string[]
+  ): Promise<CampaignMetrics> => {
+    return monitorFunction('analytics.getCampaignMetrics', async () => {
+      setIsLoading(true)
+      setError(null)
+
+      try {
+        let query = supabase
+          .from('campaigns')
+          .select(`
+            *,
+            messages!inner(
+              status,
+              delivered_at,
+              opened_at,
+              clicked_at,
+              replied_at,
+              failed_at,
+              error
+            )
+          `)
+          .eq('tenant_id', tenant?.id)
+
+        if (dateRange) {
+          query = query
+            .gte('created_at', dateRange.start.toISOString())
+            .lte('created_at', dateRange.end.toISOString())
         }
+
+        if (campaignIds && campaignIds.length > 0) {
+          query = query.in('id', campaignIds)
+        }
+
+        const { data, error } = await query
+
+        if (error) throw error
+
+        // Calcular métricas
+        const totalSent = data?.length || 0
+        const messages = data?.flatMap(campaign => campaign.messages) || []
         
-        volumeMap.set(date, current)
-      })
+        const delivered = messages.filter(msg => msg.delivered_at).length
+        const opened = messages.filter(msg => msg.opened_at).length
+        const clicked = messages.filter(msg => msg.clicked_at).length
+        const replied = messages.filter(msg => msg.replied_at).length
+        const failed = messages.filter(msg => msg.failed_at).length
 
-      const volumeData: MessageVolumeData[] = []
-      const currentDate = new Date(start)
-      
-      while (currentDate <= end) {
-        const dateStr = format(currentDate, 'yyyy-MM-dd')
-        const data = volumeMap.get(dateStr) || { sent: 0, received: 0 }
-        
-        volumeData.push({
-          date: dateStr,
-          sent: data.sent,
-          received: data.received
-        })
-        
-        currentDate.setDate(currentDate.getDate() + 1)
-      }
-
-      setMessageVolumeData(volumeData)
-
-    } catch (error) {
-      console.error('Error fetching message volume data:', error)
-    }
-  }, [user, getDateRange, tenantId])
-
-  // Fetch campaign performance data
-  const fetchCampaignPerformanceData = useCallback(async () => {
-    if (!user) return
-
-    try {
-      const { start, end } = getDateRange()
-      
-      const campaignsQuery = supabase
-        .from('campaigns')
-        .select(`
-          *,
-          messages (
-            id,
-            status,
-            type,
-            created_at
-          )
-        `)
-        .gte('created_at', start.toISOString())
-        .lte('created_at', end.toISOString())
-
-      const { data: campaigns } = tenantId
-        ? await campaignsQuery.eq('tenant_id', tenantId)
-        : await campaignsQuery.eq('user_id', user.id)
-
-      const performanceData: CampaignPerformanceData[] = campaigns?.map(campaign => {
-        const messages = campaign.messages || []
-        const sent = messages.filter((m: any) => m.type === 'sent').length
-        const delivered = messages.filter((m: any) => m.status === 'delivered').length
-        const opened = Math.floor(delivered * 0.7) // Simulated open rate
-        const clicked = Math.floor(opened * 0.3) // Simulated click rate
+        const conversionRate = totalSent > 0 ? (clicked / totalSent) * 100 : 0
+        const engagementRate = totalSent > 0 ? ((opened + clicked + replied) / totalSent) * 100 : 0
 
         return {
-          name: campaign.name,
-          sent,
+          totalSent,
           delivered,
           opened,
           clicked,
-          status: campaign.status
+          replied,
+          failed,
+          conversionRate,
+          engagementRate,
+          costPerMessage: 0.05, // Mock - integrar com sistema de cobrança
+          roi: conversionRate * 10 // Mock - calcular ROI real
         }
-      }) || []
 
-      setCampaignPerformanceData(performanceData)
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Erro ao obter métricas de campanhas')
+        throw error
+      } finally {
+        setIsLoading(false)
+      }
+    })
+  }, [tenant?.id])
 
-    } catch (error) {
-      console.error('Error fetching campaign performance data:', error)
-    }
-  }, [user, getDateRange, tenantId])
+  // Helper para obter número da semana
+  const getWeekNumber = (date: Date): number => {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+    const dayNum = d.getUTCDay() || 7
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum)
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+    return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
+  }
 
-  // Fetch audience segment data
-  const fetchAudienceSegmentData = useCallback(async () => {
-    if (!user) return
+  // Serviços preditivos
+  const getPredictiveService = useCallback(() => {
+    return getPredictiveAnalyticsService(analytics)
+  }, [])
 
+  const predictEngagement = useCallback(async (campaignData: any): Promise<PredictionResult> => {
+    return monitorFunction('analytics.predictEngagement', async () => {
+      const service = getPredictiveService()
+      return await service.predictEngagement(campaignData)
+    })
+  }, [getPredictiveService])
+
+  const predictChurn = useCallback(async (userData: any): Promise<PredictionResult> => {
+    return monitorFunction('analytics.predictChurn', async () => {
+      const service = getPredictiveService()
+      return await service.predictChurn(userData)
+    })
+  }, [getPredictiveService])
+
+  const predictConversion = useCallback(async (campaignData: any): Promise<PredictionResult> => {
+    return monitorFunction('analytics.predictConversion', async () => {
+      const service = getPredictiveService()
+      return await service.predictConversion(campaignData)
+    })
+  }, [getPredictiveService])
+
+  const findOptimalSendTime = useCallback(async (audienceData: any): Promise<PredictionResult> => {
+    return monitorFunction('analytics.findOptimalSendTime', async () => {
+      const service = getPredictiveService()
+      return await service.findOptimalSendTime(audienceData)
+    })
+  }, [getPredictiveService])
+
+  const intelligentSegmentation = useCallback(async (users: any[]): Promise<any[]> => {
+    return monitorFunction('analytics.intelligentSegmentation', async () => {
+      const service = getPredictiveService()
+      return await service.intelligentSegmentation(users)
+    })
+  }, [getPredictiveService])
+
+  const analyzeSentiment = useCallback(async (messages: string[]): Promise<any> => {
+    return monitorFunction('analytics.analyzeSentiment', async () => {
+      const service = getPredictiveService()
+      return await service.analyzeSentiment(messages)
+    })
+  }, [getPredictiveService])
+
+  // Funções de exportação
+  const exportToExcel = useCallback(async (data: any[], filename: string) => {
     try {
-      const contactsQuery = supabase
-        .from('contacts')
-        .select('metadata')
+      const ws = XLSX.utils.json_to_sheet(data)
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Dados')
+      XLSX.writeFile(wb, `${filename}.xlsx`)
+      toast.success('Exportado para Excel com sucesso')
+    } catch (error) {
+      toast.error('Erro ao exportar para Excel')
+      console.error('Erro ao exportar Excel:', error)
+    }
+  }, [])
 
-      const { data: contacts } = tenantId
-        ? await contactsQuery.eq('tenant_id', tenantId)
-        : await contactsQuery.eq('user_id', user.id)
+  const exportToCSV = useCallback(async (data: any[], filename: string) => {
+    try {
+      const ws = XLSX.utils.json_to_sheet(data)
+      const csv = XLSX.utils.sheet_to_csv(ws)
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      link.download = `${filename}.csv`
+      link.click()
+      toast.success('Exportado para CSV com sucesso')
+    } catch (error) {
+      toast.error('Erro ao exportar para CSV')
+      console.error('Erro ao exportar CSV:', error)
+    }
+  }, [])
 
-      // Simulate device and location segmentation
-      const deviceData = [
-        { name: 'Mobile', value: Math.floor((contacts?.length || 0) * 0.7) },
-        { name: 'Desktop', value: Math.floor((contacts?.length || 0) * 0.2) },
-        { name: 'Tablet', value: Math.floor((contacts?.length || 0) * 0.1) }
-      ]
-
-      const locationData = [
-        { name: 'São Paulo', value: Math.floor((contacts?.length || 0) * 0.4) },
-        { name: 'Rio de Janeiro', value: Math.floor((contacts?.length || 0) * 0.25) },
-        { name: 'Belo Horizonte', value: Math.floor((contacts?.length || 0) * 0.15) },
-        { name: 'Outros', value: Math.floor((contacts?.length || 0) * 0.2) }
-      ]
-
-      setAudienceSegmentData({
-        device: deviceData,
-        location: locationData
+  const exportToPDF = useCallback(async (data: any[], headers: string[], filename: string, title?: string) => {
+    try {
+      const doc = new jsPDF()
+      
+      if (title) {
+        doc.setFontSize(16)
+        doc.text(title, 14, 15)
+      }
+      
+      // @ts-ignore
+      doc.autoTable({
+        head: [headers],
+        body: data.map(item => headers.map(header => item[header] || '')),
+        startY: title ? 25 : 20,
+        theme: 'grid',
+        styles: { fontSize: 8 }
       })
-
+      
+      doc.save(`${filename}.pdf`)
+      toast.success('Exportado para PDF com sucesso')
     } catch (error) {
-      console.error('Error fetching audience segment data:', error)
-    }
-  }, [user, tenantId])
-
-  // Fetch response time data
-  const fetchResponseTimeData = useCallback(async () => {
-    if (!user) return
-
-    try {
-      const { start, end } = getDateRange()
-      
-      // Simulate response time data
-      const responseData: ResponseTimeData[] = []
-      const currentDate = new Date(start)
-      
-      while (currentDate <= end) {
-        const dateStr = format(currentDate, 'yyyy-MM-dd')
-        
-        responseData.push({
-          date: dateStr,
-          averageTime: Math.floor(Math.random() * 30) + 5 // 5-35 minutes
-        })
-        
-        currentDate.setDate(currentDate.getDate() + 1)
-      }
-
-      setResponseTimeData(responseData)
-
-    } catch (error) {
-      console.error('Error fetching response time data:', error)
-    }
-  }, [user, getDateRange])
-
-  // Get real-time metrics
-  const getRealTimeMetrics = useCallback(async (): Promise<RealTimeMetrics> => {
-    if (!user) {
-      return {
-        messagesLastHour: 0,
-        activeChats: 0,
-        responseTime: '0 min',
-        onlineAgents: 0
-      }
-    }
-
-    try {
-      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
-      
-      const msgsQuery = supabase
-        .from('messages')
-        .select('id')
-        .gte('created_at', oneHourAgo.toISOString())
-
-      const { data: recentMessages } = tenantId
-        ? await msgsQuery.eq('tenant_id', tenantId)
-        : await msgsQuery.eq('user_id', user.id)
-
-      const contactsQuery = supabase
-        .from('contacts')
-        .select('id')
-        .gte('last_interaction', oneHourAgo.toISOString())
-
-      const { data: activeChats } = tenantId
-        ? await contactsQuery.eq('tenant_id', tenantId)
-        : await contactsQuery.eq('user_id', user.id)
-
-      return {
-        messagesLastHour: recentMessages?.length || 0,
-        activeChats: activeChats?.length || 0,
-        responseTime: `${Math.floor(Math.random() * 10) + 2} min`,
-        onlineAgents: 1
-      }
-
-    } catch (error) {
-      console.error('Error fetching real-time metrics:', error)
-      return {
-        messagesLastHour: 0,
-        activeChats: 0,
-        responseTime: '0 min',
-        onlineAgents: 0
-      }
-    }
-  }, [user, tenantId])
-
-  // Update filters
-  const updateFilters = useCallback((newFilters: Partial<AnalyticsFilters>) => {
-    setFilters(prev => ({ ...prev, ...newFilters }))
-  }, [])
-
-  // Export analytics
-  const exportAnalytics = useCallback(async (options: ExportOptions) => {
-    try {
-      setLoading(true)
-      
-      // Simulate export process
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      
-      const filename = `analytics-${format(new Date(), 'yyyy-MM-dd')}.${options.format}`
-      toast.success(`Relatório exportado: ${filename}`)
-      
-    } catch (error) {
-      console.error('Error exporting analytics:', error)
-      toast.error('Erro ao exportar relatório')
-    } finally {
-      setLoading(false)
+      toast.error('Erro ao exportar para PDF')
+      console.error('Erro ao exportar PDF:', error)
     }
   }, [])
 
-  // Compare periods
-  const comparePeriods = useCallback(async (period1: AnalyticsFilters, period2: AnalyticsFilters) => {
-    // Implementation for period comparison
-    console.log('Comparing periods:', period1, period2)
+  // WebSocket para métricas em tempo real
+  const subscribeToRealTimeMetrics = useCallback((callback: (data: any) => void) => {
+    if (!tenant?.id) return
+
+    const channel = supabase
+      .channel(`analytics:${tenant.id}`)
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'analytics_events' },
+        (payload) => {
+          callback(payload.new)
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [tenant?.id])
+
+  // Alertas automáticos
+  const setupMetricAlerts = useCallback((alerts: Array<{
+    metric: string
+    threshold: number
+    operator: 'greater' | 'less' | 'equals'
+    message: string
+  }>) => {
+    // Implementar sistema de alertas
+    alerts.forEach(alert => {
+      console.log(`Alerta configurado: ${alert.metric} ${alert.operator} ${alert.threshold}`)
+    })
   }, [])
-
-  // Refresh all metrics
-  const refreshMetrics = useCallback(async () => {
-    await Promise.all([
-      fetchMetrics(),
-      fetchMessageVolumeData(),
-      fetchCampaignPerformanceData(),
-      fetchAudienceSegmentData(),
-      fetchResponseTimeData()
-    ])
-  }, [fetchMetrics, fetchMessageVolumeData, fetchCampaignPerformanceData, fetchAudienceSegmentData, fetchResponseTimeData])
-
-  // Load data on mount and filter changes
-  useEffect(() => {
-    refreshMetrics()
-  }, [refreshMetrics])
 
   return {
-    metrics,
-    messageVolumeData,
-    campaignPerformanceData,
-    audienceSegmentData,
-    responseTimeData,
-    filters,
-    loading,
-    updateFilters,
-    exportAnalytics,
-    getRealTimeMetrics,
-    comparePeriods,
-    refreshMetrics
+    // Métodos
+    track,
+    trackPage,
+    getCampaignMetrics,
+    // Serviços preditivos
+    getPredictiveService,
+    predictEngagement,
+    predictChurn,
+    predictConversion,
+    findOptimalSendTime,
+    intelligentSegmentation,
+    analyzeSentiment,
+    // Exportação
+    exportToExcel,
+    exportToCSV,
+    exportToPDF,
+    // Real-time e alertas
+    subscribeToRealTimeMetrics,
+    setupMetricAlerts,
+    
+    // Constantes
+    ANALYTICS_EVENTS,
+    
+    // Estado
+    isLoading,
+    error
   }
 }

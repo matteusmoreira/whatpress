@@ -1,28 +1,30 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 
-// Criar mocks simples
+// Criar mocks encadeáveis para o Supabase
+const selectChain: any = {
+  eq: vi.fn(() => selectChain),
+  order: vi.fn(() => selectChain),
+  limit: vi.fn(() => ({ data: [], error: null })),
+  data: [],
+  error: null,
+}
+
+const updateChain: any = {
+  eq: vi.fn(() => ({ data: null, error: null })),
+}
+
+const insertChain: any = {
+  select: vi.fn(() => ({
+    single: vi.fn(() => ({ data: null, error: null }))
+  }))
+}
+
 const mockSupabase = {
   from: vi.fn(() => ({
-    select: vi.fn(() => ({
-      eq: vi.fn(() => ({
-        order: vi.fn(() => ({
-          limit: vi.fn(() => ({ data: [], error: null }))
-        }))
-      })),
-      order: vi.fn(() => ({
-        limit: vi.fn(() => ({ data: [], error: null }))
-      })),
-      limit: vi.fn(() => ({ data: [], error: null }))
-    })),
-    insert: vi.fn(() => ({
-      select: vi.fn(() => ({
-        single: vi.fn(() => ({ data: null, error: null }))
-      }))
-    })),
-    update: vi.fn(() => ({
-      eq: vi.fn(() => ({ data: null, error: null }))
-    }))
+    select: vi.fn(() => selectChain),
+    insert: vi.fn(() => insertChain),
+    update: vi.fn(() => updateChain),
   })),
   storage: {
     from: vi.fn(() => ({
@@ -154,6 +156,12 @@ describe('Fluxo de Busca de Contatos e Envio de Mídia', () => {
     vi.mocked(require('@/lib/supabase').supabase.from).mockReturnValue({
       select: vi.fn(() => ({
         eq: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            limit: vi.fn(() => ({
+              data: [{ id: 'test-instance-id', status: 'connected', api_key: 'test-key' }],
+              error: null
+            }))
+          })),
           limit: vi.fn(() => ({
             data: [{ id: 'test-instance-id', status: 'connected', api_key: 'test-key' }],
             error: null
@@ -205,6 +213,12 @@ describe('Fluxo de Busca de Contatos e Envio de Mídia', () => {
     vi.mocked(require('@/lib/supabase').supabase.from).mockReturnValue({
       select: vi.fn(() => ({
         eq: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            limit: vi.fn(() => ({
+              data: [{ id: 'test-instance-id', status: 'connected', api_key: 'test-key' }],
+              error: null
+            }))
+          })),
           limit: vi.fn(() => ({
             data: [{ id: 'test-instance-id', status: 'connected', api_key: 'test-key' }],
             error: null
@@ -263,24 +277,19 @@ describe('Fluxo de Busca de Contatos e Envio de Mídia', () => {
       preview: 'data:image/jpeg;base64,test'
     };
 
-    await expect(
-      act(async () => {
-        await result.current.sendMediaMessage(
-          '5511999999999',
-          'Mensagem de teste',
-          mockMediaFile
-        );
-      })
-    ).rejects.toThrow();
+    await act(async () => {
+      const ok = await result.current.sendMediaMessage(
+        '5511999999999',
+        'Mensagem de teste',
+        mockMediaFile
+      );
+      expect(ok).toBe(false)
+    })
 
-    // Verificar se o toast de erro foi chamado
-    await waitFor(() => {
-      const { toast } = require('@/hooks/use-toast');
-      expect(toast.useToast).toHaveBeenCalledWith({
-        title: 'Erro ao enviar mídia',
-        description: 'Erro no upload',
-        variant: 'destructive'
-      });
+    // Verificar se o toast de erro foi chamado (via sonner)
+    await waitFor(async () => {
+      const { toast: sonnerToast } = await import('sonner')
+      expect(sonnerToast.error).toHaveBeenCalledWith('Erro no upload');
     });
   });
 
@@ -331,3 +340,17 @@ describe('Fluxo de Busca de Contatos e Envio de Mídia', () => {
     // mas não causa erro no hook
   });
 });
+    // Garantir instância conectada para atingir caminho de upload
+    const { supabase } = await import('@/lib/supabase')
+    vi.mocked(supabase.from).mockReturnValue({
+      select: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            limit: vi.fn(() => ({
+              data: [{ id: 'test-instance-id', status: 'connected', api_key: 'test-key' }],
+              error: null
+            }))
+          }))
+        }))
+      }))
+    } as any);

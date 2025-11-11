@@ -17,7 +17,8 @@ import {
   Crown,
   Calendar,
   Bell,
-  TrendingUp
+  TrendingUp,
+  Lock
 } from 'lucide-react'
 import { useRoleContext } from '@/contexts/RoleContext'
 
@@ -100,11 +101,17 @@ export function Sidebar({ className }: SidebarProps) {
       current: location.pathname.startsWith('/dashboard/quotas') 
     },
     { 
-      name: 'Roles', 
-      href: '/dashboard/roles', 
-      icon: Shield, 
-      current: location.pathname.startsWith('/dashboard/roles') 
-    },
+    name: 'Roles', 
+    href: '/dashboard/roles', 
+    icon: Shield, 
+    current: location.pathname.startsWith('/dashboard/roles') 
+  },
+  { 
+    name: 'Segurança', 
+    href: '/dashboard/security', 
+    icon: Lock, 
+    current: location.pathname.startsWith('/dashboard/security') 
+  },
   ]
 
   const bottomNavigation = [

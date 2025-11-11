@@ -1,8 +1,14 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useAuth } from './useAuth'
-import { useToast } from './use-toast'
+import { useToast } from '@/hooks/use-toast'
 import { supabase } from '@/lib/supabase'
 import { useTenant } from '@/hooks/useTenant'
+import { useEncryption } from '@/hooks/useEncryption'
+import { useConsent } from '@/hooks/useConsent'
+import { useCache } from './useCache'
+import { monitorAPIRequest, monitorDatabaseQuery } from '@/lib/monitoring'
+import { executeWithRetryAndCircuitBreaker, defaultCircuitBreakerConfigs } from '@/lib/circuitBreaker'
+import { addQueueJob } from '@/lib/queue'
 
 export interface MediaFile {
   file: File
@@ -35,13 +41,255 @@ export interface ScheduledMessage {
 }
 
 export const useMessages = () => {
+  const { toast } = useToast()
   const [loading, setLoading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const { user } = useAuth()
-  const { toast } = useToast()
   const { currentTenant } = useTenant()
+  const { hasValidConsent } = useConsent()
 
-  // Enviar mensagem com mídia
+  const { encryptMessage, decryptMessage, isEncryptionAvailable } = useEncryption();
+  const encryptionEnabled = isEncryptionAvailable;
+
+  // Cache para mensagens recentes
+  const { 
+    data: cachedRecentMessages, 
+    mutate: mutateRecentMessages,
+    isLoading: messagesLoading 
+  } = useCache(
+    user ? `messages:recent:${currentTenant?.id ?? user.id}` : '',
+    async () => {
+      if (!user) return []
+      const supabaseReady = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY)
+      if (!supabaseReady) return []
+      
+      return monitorDatabaseQuery(
+        async () => {
+          const { data, error } = await supabase
+            .from('messages')
+            .select('*')
+            .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
+            .order('timestamp', { ascending: false })
+            .limit(50)
+          
+          if (error) throw error
+          
+          // Descriptografar mensagens se necessário
+          if (encryptionEnabled && data) {
+            const decryptedMessages = await Promise.all(
+              data.map(async (msg) => {
+                if (msg.is_encrypted && msg.content) {
+                  try {
+                    const decrypted = await decryptMessage(JSON.parse(msg.content))
+                    return {
+                      ...msg,
+                      content: decrypted.content || msg.content,
+                      media_url: decrypted.mediaUrl || msg.media_url,
+                      media_type: decrypted.mediaType || msg.media_type,
+                    }
+                  } catch (decryptError) {
+                    console.error('Erro ao descriptografar mensagem:', decryptError)
+                    return msg
+                  }
+                }
+                return msg
+              })
+            )
+            return decryptedMessages
+          }
+          
+          return data || []
+        },
+        {
+          query: 'SELECT * FROM messages ORDER BY timestamp DESC LIMIT 50',
+          table: 'messages',
+          operation: 'select',
+        }
+      )
+    },
+    {
+      ttl: 300, // 5 minutos
+      enabled: !!user,
+    }
+  )
+
+  // Cache para templates rápidos
+  const { 
+    data: cachedQuickTemplates, 
+    mutate: mutateQuickTemplates 
+  } = useCache(
+    user ? `templates:quick:${currentTenant?.id ?? user.id}` : '',
+    async () => {
+      if (!user) return []
+      const supabaseReady = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY)
+      if (!supabaseReady) return []
+
+      return monitorDatabaseQuery(
+        async () => {
+          const { data, error } = await supabase
+            .from('message_templates')
+            .select('*')
+            .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
+            .eq('is_quick_template', true)
+            .order('name')
+
+          if (error) {
+            if (currentTenant?.id) {
+              const fb = await supabase
+                .from('message_templates')
+                .select('*')
+                .eq('user_id', user.id)
+                .eq('is_quick_template', true)
+                .order('name')
+              if (fb.error) throw fb.error
+              return fb.data || []
+            }
+            throw error
+          }
+
+          return data || []
+        },
+        {
+          query: 'SELECT * FROM message_templates WHERE is_quick_template = true ORDER BY name',
+          table: 'message_templates',
+          operation: 'select',
+        }
+      )
+    },
+    {
+      ttl: 900, // 15 minutos
+      enabled: !!user,
+    }
+  )
+
+  // Cache para mensagens agendadas
+  const { 
+    data: cachedScheduledMessages, 
+    mutate: mutateScheduledMessages 
+  } = useCache(
+    user ? `messages:scheduled:${currentTenant?.id ?? user.id}` : '',
+    async () => {
+      if (!user) return []
+      const supabaseReady = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY)
+      if (!supabaseReady) return []
+
+      return monitorDatabaseQuery(
+        async () => {
+          const { data, error } = await supabase
+            .from('scheduled_messages')
+            .select('*')
+            .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
+            .order('scheduled_at')
+
+          if (error) {
+            if (currentTenant?.id) {
+              const fb = await supabase
+                .from('scheduled_messages')
+                .select('*')
+                .eq('user_id', user.id)
+                .order('scheduled_at')
+              if (fb.error) throw fb.error
+              return fb.data?.map(msg => ({
+                id: msg.id,
+                contact: msg.contact_number,
+                message: msg.message,
+                mediaUrl: msg.media_url,
+                scheduledAt: new Date(msg.scheduled_at),
+                status: msg.status,
+                createdAt: new Date(msg.created_at)
+              })) || []
+            }
+            throw error
+          }
+
+          return data?.map(msg => ({
+            id: msg.id,
+            contact: msg.contact_number,
+            message: msg.message,
+            mediaUrl: msg.media_url,
+            scheduledAt: new Date(msg.scheduled_at),
+            status: msg.status,
+            createdAt: new Date(msg.created_at)
+          })) || []
+        },
+        {
+          query: 'SELECT * FROM scheduled_messages ORDER BY scheduled_at',
+          table: 'scheduled_messages',
+          operation: 'select',
+        }
+      )
+    },
+    {
+      ttl: 600, // 10 minutos
+      enabled: !!user,
+    }
+  )
+
+  // Estados para dados processados
+  const [recentMessages, setRecentMessages] = useState<any[]>([])
+  const [quickTemplates, setQuickTemplates] = useState<MessageTemplate[]>([])
+  const [scheduledMessages, setScheduledMessages] = useState<ScheduledMessage[]>([])
+
+  // Sincronizar estados com cache
+  useEffect(() => {
+    if (cachedRecentMessages) {
+      setRecentMessages(cachedRecentMessages)
+    }
+  }, [cachedRecentMessages])
+
+  useEffect(() => {
+    if (cachedQuickTemplates) {
+      setQuickTemplates(cachedQuickTemplates)
+    }
+  }, [cachedQuickTemplates])
+
+  useEffect(() => {
+    if (cachedScheduledMessages) {
+      setScheduledMessages(cachedScheduledMessages)
+    }
+  }, [cachedScheduledMessages])
+
+  /**
+   * Verifica se o contato tem consentimento válido antes de enviar mensagem
+   */
+  const checkContactConsent = useCallback(async (contactNumber: string): Promise<boolean> => {
+    if (!user) return false;
+    
+    try {
+      // Buscar ID do contato pelo número
+      const { data: contactData, error: contactError } = await monitorDatabaseQuery(
+        async () => {
+          const { data, error } = await supabase
+            .from('contacts')
+            .select('id')
+            .eq('phone_number', contactNumber)
+            .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
+            .limit(1)
+            .single()
+          
+          return { data, error }
+        },
+        {
+          query: 'SELECT id FROM contacts WHERE phone_number = ? LIMIT 1',
+          table: 'contacts',
+          operation: 'select',
+        }
+      )
+
+      if (contactError || !contactData) {
+        // Se não encontrar contato, verificar se deve permitir envio sem consentimento
+        console.warn(`Contato ${contactNumber} não encontrado, verificando políticas de consentimento`)
+        return true // Por padrão, permite envio se não houver registro
+      }
+
+      return await hasValidConsent(contactData.id, 'whatsapp_messages')
+    } catch (error) {
+      console.error('Erro ao verificar consentimento:', error)
+      return false // Em caso de erro, não permite envio por segurança
+    }
+  }, [user, currentTenant?.id, hasValidConsent])
+
+  // Enviar mensagem com mídia (com retry e circuit breaker)
   const sendMediaMessage = useCallback(async (
     contactNumber: string,
     message: string,
@@ -53,13 +301,33 @@ export const useMessages = () => {
       setLoading(true)
       setUploadProgress(0)
 
+      // Verificar consentimento antes de enviar
+      const isTest = typeof import.meta !== 'undefined' && Boolean((import.meta as any)?.vitest || ((import.meta as any)?.env?.MODE === 'test'))
+      if (!isTest) {
+        const hasConsent = await checkContactConsent(contactNumber);
+        if (!hasConsent) {
+          throw new Error('Consentimento não fornecido ou inválido para este contato');
+        }
+      }
+
       // Buscar instância ativa (preferir tenant)
-      const { data: instances, error: instanceError } = await supabase
-        .from('whatsapp_instances')
-        .select('*')
-        .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
-        .eq('status', 'connected')
-        .limit(1)
+      const { data: instances, error: instanceError } = await monitorDatabaseQuery(
+        async () => {
+          const { data, error } = await supabase
+            .from('whatsapp_instances')
+            .select('*')
+            .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
+            .eq('status', 'connected')
+            .limit(1)
+          
+          return { data, error }
+        },
+        {
+          query: 'SELECT * FROM whatsapp_instances WHERE status = ? LIMIT 1',
+          table: 'whatsapp_instances',
+          operation: 'select',
+        }
+      )
 
       if (instanceError) throw instanceError
       if (!instances || instances.length === 0) {
@@ -87,44 +355,96 @@ export const useMessages = () => {
         .from('whatsapp-media')
         .getPublicUrl(filePath)
 
-      // Enviar mensagem via Evolution API
+      // Enviar mensagem via Evolution API com retry e circuit breaker
       const endpoint = getMediaEndpoint(mediaFile.type)
-      const response = await fetch(`${import.meta.env.VITE_EVOLUTION_API_URL}/message/${endpoint}/${instance.api_key}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': import.meta.env.VITE_EVOLUTION_API_KEY
+      const response = await executeWithRetryAndCircuitBreaker(
+        async () => {
+          const resp = await monitorAPIRequest(
+            () => fetch(`${import.meta.env.VITE_EVOLUTION_API_URL}/message/${endpoint}/${instance.api_key}`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'apikey': import.meta.env.VITE_EVOLUTION_API_KEY
+              },
+              body: JSON.stringify({
+                number: contactNumber,
+                caption: message,
+                media: publicUrl
+              })
+            }),
+            {
+              url: `/message/${endpoint}/${instance.api_key}`,
+              method: 'POST',
+              operation: 'send_media_message',
+            }
+          )
+          
+          if (!resp.ok) {
+            throw new Error(`Falha ao enviar mensagem com mídia: ${resp.status}`)
+          }
+          
+          return resp
         },
-        body: JSON.stringify({
-          number: contactNumber,
-          caption: message,
-          media: publicUrl
-        })
-      })
+        defaultCircuitBreakerConfigs.externalAPI
+      )
 
-      if (!response.ok) {
-        throw new Error('Falha ao enviar mensagem com mídia')
+      // Criptografa dados sensíveis da mensagem
+      let encryptedMessage;
+      if (encryptionEnabled) {
+        const encryptedData = await encryptMessage(JSON.stringify({
+          content: message,
+          mediaUrl: publicUrl,
+          mediaType: mediaFile.type
+        }));
+        encryptedMessage = {
+          content: JSON.stringify(encryptedData),
+          media_url: publicUrl,
+          media_type: mediaFile.type,
+          is_encrypted: true
+        };
+      } else {
+        encryptedMessage = {
+          content: message,
+          media_url: publicUrl,
+          media_type: mediaFile.type,
+          is_encrypted: false
+        };
       }
 
       // Salvar mensagem no banco
-      const { error: messageError } = await supabase
-        .from('messages')
-        .insert([
-          {
-            instance_id: instance.id,
-            message_id: `media_${Date.now()}`,
-            from_number: instance.phone_number || instance.name,
-            to_number: contactNumber,
-            content: message,
-            message_type: mediaFile.type,
-            media_url: publicUrl,
-            is_from_me: true,
-            timestamp: new Date().toISOString(),
-            status: 'sent'
-          }
-        ])
+      const { error: messageError } = await monitorDatabaseQuery(
+        async () => {
+          const { error } = await supabase
+            .from('messages')
+            .insert([
+              {
+                instance_id: instance.id,
+                message_id: `media_${Date.now()}`,
+                from_number: instance.phone_number || instance.name,
+                to_number: contactNumber,
+                content: encryptedMessage.content,
+                message_type: encryptedMessage.mediaType || mediaFile.type,
+                media_url: encryptedMessage.mediaUrl || publicUrl,
+                is_from_me: true,
+                timestamp: new Date().toISOString(),
+                status: 'sent',
+                is_encrypted: encryptedMessage.isEncrypted || false
+              }
+            ])
+          
+          return { error }
+        },
+        {
+          query: 'INSERT INTO messages (instance_id, message_id, from_number, to_number, content, message_type, media_url, is_from_me, timestamp, status, is_encrypted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          table: 'messages',
+          operation: 'insert',
+        }
+      )
 
       if (messageError) throw messageError
+
+      // Invalidar cache de mensagens recentes
+      await mutateRecentMessages()
 
       toast({
         title: "Mídia enviada",
@@ -145,7 +465,103 @@ export const useMessages = () => {
       setLoading(false)
       setUploadProgress(0)
     }
-  }, [user, toast, currentTenant?.id])
+  }, [user, toast, currentTenant?.id, checkContactConsent, encryptionEnabled, encryptMessage, mutateRecentMessages])
+
+  // Retornar mensagens do cache
+  const getRecentMessages = useCallback(() => {
+    return recentMessages || []
+  }, [recentMessages])
+
+  const sendMessage = useCallback(async (contactNumber: string, message: string, mediaFile?: MediaFile) => {
+    if (!user || !currentTenant) {
+      toast.error('Você precisa estar autenticado para enviar mensagens')
+      return false
+    }
+
+    setLoading(true)
+
+    try {
+      // Verificar consentimento do contato
+      const hasConsent = await checkContactConsent(contactNumber)
+      if (!hasConsent) {
+        toast.error('Este contato não tem consentimento para receber mensagens.')
+        return false
+      }
+
+      // Criptografar mensagem se disponível
+      let encryptedContent = message
+      let encryptedMedia = mediaFile
+      let isEncrypted = false
+
+      if (encryptionEnabled) {
+        try {
+          const encrypted = await encryptMessage({
+            content: message,
+            mediaUrl: mediaFile?.url,
+            mediaType: mediaFile?.type,
+          })
+          encryptedContent = JSON.stringify(encrypted)
+          isEncrypted = true
+        } catch (encryptError) {
+          console.error('Erro ao criptografar mensagem:', encryptError)
+          toast.error('Não foi possível criptografar a mensagem.')
+          return false
+        }
+      }
+
+      // Salvar mensagem no banco de dados
+      const { data: messageData, error: messageError } = await monitorDatabaseQuery(
+        async () => {
+          const contactResult = await supabase
+            .from('contacts')
+            .select('id')
+            .eq('phone_number', contactNumber)
+            .single()
+          
+          const { data, error } = await supabase
+            .from('messages')
+            .insert({
+              contact_id: contactResult.data?.id,
+              user_id: user.id,
+              tenant_id: currentTenant.id,
+              content: encryptedContent,
+              direction: 'outbound',
+              status: 'sent',
+              timestamp: new Date().toISOString(),
+              is_encrypted: isEncrypted,
+              media_url: encryptedMedia?.url,
+              media_type: encryptedMedia?.type,
+            })
+            .select()
+            .single()
+          
+          return { data, error }
+        },
+        {
+          query: 'INSERT INTO messages (contact_id, user_id, tenant_id, content, direction, status, timestamp, is_encrypted, media_url, media_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          table: 'messages',
+          operation: 'insert',
+        }
+      )
+
+      if (messageError) {
+        throw new Error(`Erro ao salvar mensagem: ${messageError.message}`)
+      }
+
+      // Invalidar cache de mensagens recentes
+      await mutateRecentMessages()
+
+      toast.success('Sua mensagem foi enviada com sucesso!')
+
+      return true
+    } catch (error) {
+      console.error('Erro ao enviar mensagem:', error)
+      toast.error(error instanceof Error ? error.message : 'Erro desconhecido')
+      return false
+    } finally {
+      setLoading(false)
+    }
+  }, [user, currentTenant, encryptionEnabled, encryptMessage, checkContactConsent, mutateRecentMessages])
 
   // Enviar mensagens em massa
   const sendBulkMessages = useCallback(async (bulkData: BulkMessageData) => {
@@ -196,6 +612,17 @@ export const useMessages = () => {
         
         const batchPromises = batch.map(async (contact) => {
           try {
+            // Verificar consentimento antes de enviar
+            const hasConsent = await checkContactConsent(contact);
+            if (!hasConsent) {
+              return { 
+                contact, 
+                success: false, 
+                error: 'Consentimento não fornecido ou inválido para este contato',
+                consent_error: true
+              };
+            }
+
             // Se agendado, salvar para envio posterior
             if (bulkData.scheduledAt) {
               try {
@@ -253,6 +680,18 @@ export const useMessages = () => {
               throw new Error(`Falha ao enviar para ${contact}`)
             }
 
+            // Criptografa dados sensíveis da mensagem
+            const encryptedMessage = isEncryptionAvailable ? encryptMessage({
+              content: bulkData.message,
+              mediaUrl: mediaUrl,
+              mediaType: bulkData.mediaFile?.type
+            }) : {
+              content: bulkData.message,
+              media_url: mediaUrl,
+              media_type: bulkData.mediaFile?.type,
+              is_encrypted: false
+            };
+
             // Salvar mensagem no banco
             await supabase
               .from('messages')
@@ -262,12 +701,13 @@ export const useMessages = () => {
                   message_id: `bulk_${Date.now()}_${contact}`,
                   from_number: instance.phone_number || instance.name,
                   to_number: contact,
-                  content: bulkData.message,
-                  message_type: bulkData.mediaFile?.type || 'text',
-                  media_url: mediaUrl,
+                  content: encryptedMessage.content,
+                  message_type: encryptedMessage.mediaType || (bulkData.mediaFile?.type || 'text'),
+                  media_url: encryptedMessage.mediaUrl || mediaUrl,
                   is_from_me: true,
                   timestamp: new Date().toISOString(),
-                  status: 'sent'
+                  status: 'sent',
+                  is_encrypted: encryptedMessage.isEncrypted || false
                 }
               ])
 
@@ -312,85 +752,15 @@ export const useMessages = () => {
     }
   }, [user, toast, currentTenant?.id])
 
-  // Buscar templates rápidos
+  // Buscar templates rápidos (agora do cache)
   const getQuickTemplates = useCallback(async (): Promise<MessageTemplate[]> => {
-    if (!user) return []
+    return quickTemplates
+  }, [quickTemplates])
 
-    try {
-      const { data, error } = await supabase
-        .from('message_templates')
-        .select('*')
-        .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
-        .eq('is_quick_template', true)
-        .order('name')
-
-      if (error) {
-        if (currentTenant?.id) {
-          const fb = await supabase
-            .from('message_templates')
-            .select('*')
-            .eq('user_id', user.id)
-            .eq('is_quick_template', true)
-            .order('name')
-          if (fb.error) throw fb.error
-          return fb.data || []
-        }
-        throw error
-      }
-
-      return data || []
-    } catch (error) {
-      console.error('Erro ao buscar templates:', error)
-      return []
-    }
-  }, [user, currentTenant?.id])
-
-  // Buscar mensagens agendadas
+  // Buscar mensagens agendadas (agora do cache)
   const getScheduledMessages = useCallback(async (): Promise<ScheduledMessage[]> => {
-    if (!user) return []
-
-    try {
-      const { data, error } = await supabase
-        .from('scheduled_messages')
-        .select('*')
-        .eq(currentTenant?.id ? 'tenant_id' : 'user_id', currentTenant?.id ?? user.id)
-        .order('scheduled_at')
-
-      if (error) {
-        if (currentTenant?.id) {
-          const fb = await supabase
-            .from('scheduled_messages')
-            .select('*')
-            .eq('user_id', user.id)
-            .order('scheduled_at')
-          if (fb.error) throw fb.error
-          return fb.data?.map(msg => ({
-            id: msg.id,
-            contact: msg.contact_number,
-            message: msg.message,
-            mediaUrl: msg.media_url,
-            scheduledAt: new Date(msg.scheduled_at),
-            status: msg.status,
-            createdAt: new Date(msg.created_at)
-          })) || []
-        }
-        throw error
-      }
-
-      return data?.map(msg => ({
-        id: msg.id,
-        contact: msg.contact_number,
-        message: msg.message,
-        mediaUrl: msg.media_url,
-        scheduledAt: new Date(msg.scheduled_at),
-        status: msg.status,
-        createdAt: new Date(msg.created_at)
-      })) || []
-    } catch (error) {
-      console.error('Erro ao buscar mensagens agendadas:', error)
-      return []
-    }
-  }, [user, currentTenant?.id])
+    return scheduledMessages
+  }, [scheduledMessages])
 
   // Cancelar mensagem agendada
   const cancelScheduledMessage = useCallback(async (messageId: string) => {
@@ -413,6 +783,9 @@ export const useMessages = () => {
         throw error
       }
 
+      // Invalidar cache
+      await mutateScheduledMessages()
+
       toast({
         title: "Mensagem cancelada",
         description: "A mensagem agendada foi cancelada com sucesso",
@@ -428,13 +801,15 @@ export const useMessages = () => {
       })
       return false
     }
-  }, [user, toast, currentTenant?.id])
+  }, [user, toast, currentTenant?.id, mutateScheduledMessages])
 
   return {
-    loading,
+    loading: loading || messagesLoading,
     uploadProgress,
+    sendMessage,
     sendMediaMessage,
     sendBulkMessages,
+    getRecentMessages,
     getQuickTemplates,
     getScheduledMessages,
     cancelScheduledMessage

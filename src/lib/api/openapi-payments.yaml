@@ -1,0 +1,686 @@
+openapi: 3.0.3
+info:
+  title: WhatPress Payment API
+  description: API para gerenciamento de pagamentos e provedores de pagamento
+  version: 1.0.0
+  contact:
+    name: WhatPress Support
+    email: support@whatpress.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.whatpress.com
+    description: Servidor de produção
+  - url: http://localhost:3000
+    description: Servidor de desenvolvimento
+
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []
+
+paths:
+  /api/payments/providers:
+    get:
+      summary: Listar provedores de pagamento
+      description: Retorna uma lista de todos os provedores de pagamento configurados para o tenant
+      tags:
+        - Pagamentos
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+      responses:
+        '200':
+          description: Lista de provedores obtida com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  - id: "prov_123"
+                    name: "Stripe Principal"
+                    provider: "stripe"
+                    status: "active"
+                    config:
+                      public_key: "pk_test_..."
+                      sandbox: true
+                      currency: "BRL"
+                      country: "BR"
+                    created_at: "2024-01-01T00:00:00Z"
+                    updated_at: "2024-01-01T00:00:00Z"
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+    post:
+      summary: Criar provedor de pagamento
+      description: Cria uma nova configuração de provedor de pagamento
+      tags:
+        - Pagamentos
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentProviderCreate'
+            example:
+              name: "Stripe Principal"
+              provider: "stripe"
+              config:
+                public_key: "pk_test_..."
+                secret_key: "sk_test_..."
+                webhook_secret: "whsec_..."
+                sandbox: true
+                currency: "BRL"
+                country: "BR"
+              status: "testing"
+      responses:
+        '201':
+          description: Provedor criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/payments/providers/available:
+    get:
+      summary: Listar provedores disponíveis
+      description: Retorna a lista de provedores de pagamento suportados pela plataforma
+      tags:
+        - Pagamentos
+      responses:
+        '200':
+          description: Lista de provedores disponíveis
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  stripe:
+                    name: "Stripe"
+                    features: ["cards", "pix", "boleto", "subscription"]
+                    currencies: ["BRL", "USD", "EUR"]
+                    countries: ["BR", "US", "CA"]
+                  mercadopago:
+                    name: "Mercado Pago"
+                    features: ["cards", "pix", "boleto", "wallet"]
+                    currencies: ["BRL", "ARS", "CLP"]
+                    countries: ["BR", "AR", "CL"]
+                  asaas:
+                    name: "Asaas"
+                    features: ["cards", "pix", "boleto", "subscription"]
+                    currencies: ["BRL"]
+                    countries: ["BR"]
+
+  /api/payments/providers/{id}:
+    get:
+      summary: Obter provedor específico
+      description: Retorna os detalhes de um provedor de pagamento específico
+      tags:
+        - Pagamentos
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID do provedor
+      responses:
+        '200':
+          description: Provedor obtido com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    put:
+      summary: Atualizar provedor
+      description: Atualiza as configurações de um provedor de pagamento
+      tags:
+        - Pagamentos
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID do provedor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentProviderUpdate'
+      responses:
+        '200':
+          description: Provedor atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      summary: Deletar provedor
+      description: Remove um provedor de pagamento e suas configurações
+      tags:
+        - Pagamentos
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID do provedor
+      responses:
+        '200':
+          description: Provedor deletado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/payments/providers/{id}/test:
+    post:
+      summary: Testar conexão com provedor
+      description: Testa a conexão com o provedor de pagamento
+      tags:
+        - Pagamentos
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID do provedor
+      responses:
+        '200':
+          description: Teste realizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  success: true
+                  message: "Conexão testada com sucesso"
+                  balance:
+                    available:
+                      - amount: 1000
+                        currency: "brl"
+        '400':
+          description: Falha na conexão
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/payments/create-intent:
+    post:
+      summary: Criar intenção de pagamento
+      description: Cria uma nova intenção de pagamento com o provedor configurado
+      tags:
+        - Pagamentos
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentIntentCreate'
+            example:
+              amount: 100.00
+              currency: "BRL"
+              description: "Pagamento de assinatura mensal"
+              customer:
+                email: "cliente@example.com"
+                name: "João Silva"
+                document: "12345678909"
+                phone: "11999999999"
+              metadata:
+                order_id: "order_123"
+                plan: "premium"
+              payment_method: "card"
+              installments: 1
+      responses:
+        '201':
+          description: Pagamento criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  payment:
+                    id: "pay_123"
+                    amount: 100.00
+                    currency: "BRL"
+                    status: "pending"
+                    provider_payment_id: "pi_1234567890"
+                    created_at: "2024-01-01T00:00:00Z"
+                  client_secret: "pi_1234567890_secret_abc123"
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /api/payments:
+    get:
+      summary: Listar pagamentos
+      description: Retorna uma lista de pagamentos com opções de filtro e paginação
+      tags:
+        - Pagamentos
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+          description: Número da página
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+          description: Número de itens por página
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, succeeded, failed, cancelled, refunded]
+          description: Filtrar por status
+        - name: customer_email
+          in: query
+          schema:
+            type: string
+          description: Filtrar por email do cliente
+      responses:
+        '200':
+          description: Lista de pagamentos obtida com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  - id: "pay_123"
+                    amount: 100.00
+                    currency: "BRL"
+                    status: "succeeded"
+                    customer_id: "cust_123"
+                    provider_payment_id: "pi_1234567890"
+                    created_at: "2024-01-01T00:00:00Z"
+                pagination:
+                  page: 1
+                  limit: 50
+                  total: 150
+                  pages: 3
+
+  /api/payments/{id}:
+    get:
+      summary: Obter pagamento específico
+      description: Retorna os detalhes de um pagamento específico
+      tags:
+        - Pagamentos
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID do pagamento
+      responses:
+        '200':
+          description: Pagamento obtido com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/payments/stats:
+    get:
+      summary: Estatísticas de pagamentos
+      description: Retorna estatísticas de pagamentos para o período especificado
+      tags:
+        - Pagamentos
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum: [7d, 30d, 90d, 1y]
+            default: 30d
+          description: Período das estatísticas
+      responses:
+        '200':
+          description: Estatísticas obtidas com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  total_amount: 15000.00
+                  total_transactions: 150
+                  by_status:
+                    succeeded: 140
+                    failed: 8
+                    pending: 2
+                  by_currency:
+                    BRL: 15000.00
+                    USD: 0.00
+                  period:
+                    start: "2024-01-01T00:00:00Z"
+                    end: "2024-01-31T23:59:59Z"
+
+  /api/payments/webhooks/{provider}:
+    post:
+      summary: Webhook de atualização de pagamento
+      description: Endpoint para receber webhooks de provedores de pagamento
+      tags:
+        - Pagamentos
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [stripe, mercadopago, asaas]
+          description: Nome do provedor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+            example:
+              id: "evt_1234567890"
+              type: "payment_intent.succeeded"
+              data:
+                object:
+                  id: "pi_1234567890"
+                  amount: 10000
+                  currency: "brl"
+                  status: "succeeded"
+      responses:
+        '200':
+          description: Webhook processado com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: boolean
+                  processed:
+                    type: object
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  parameters:
+    XTenantId:
+      name: X-Tenant-Id
+      in: header
+      required: true
+      schema:
+        type: string
+      description: ID do tenant para isolamento de dados
+
+  schemas:
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+        message:
+          type: string
+          example: "Operação realizada com sucesso"
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: "Erro na requisição"
+        details:
+          type: string
+          example: "Detalhes do erro"
+
+    PaymentProviderCreate:
+      type: object
+      required:
+        - name
+        - provider
+        - config
+      properties:
+        name:
+          type: string
+          description: Nome do provedor
+          example: "Stripe Principal"
+        provider:
+          type: string
+          enum: [stripe, mercadopago, asaas]
+          description: Tipo do provedor
+        config:
+          type: object
+          required:
+            - secret_key
+          properties:
+            public_key:
+              type: string
+              description: Chave pública do provedor
+            secret_key:
+              type: string
+              description: Chave secreta do provedor
+            webhook_secret:
+              type: string
+              description: Segredo do webhook
+            sandbox:
+              type: boolean
+              default: true
+              description: Usar ambiente de sandbox
+            currency:
+              type: string
+              default: "BRL"
+              description: Moeda padrão
+            country:
+              type: string
+              default: "BR"
+              description: País padrão
+        status:
+          type: string
+          enum: [active, inactive, testing]
+          default: "testing"
+          description: Status do provedor
+
+    PaymentProviderUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Nome do provedor
+        config:
+          type: object
+          properties:
+            public_key:
+              type: string
+            secret_key:
+              type: string
+            webhook_secret:
+              type: string
+            sandbox:
+              type: boolean
+            currency:
+              type: string
+            country:
+              type: string
+        status:
+          type: string
+          enum: [active, inactive, testing]
+
+    PaymentIntentCreate:
+      type: object
+      required:
+        - amount
+        - currency
+        - description
+        - customer
+      properties:
+        amount:
+          type: number
+          format: float
+          minimum: 0.01
+          description: Valor do pagamento
+          example: 100.00
+        currency:
+          type: string
+          default: "BRL"
+          description: Moeda do pagamento
+          example: "BRL"
+        description:
+          type: string
+          description: Descrição do pagamento
+          example: "Pagamento de assinatura mensal"
+        customer:
+          type: object
+          required:
+            - email
+            - name
+          properties:
+            email:
+              type: string
+              format: email
+              description: Email do cliente
+              example: "cliente@example.com"
+            name:
+              type: string
+              description: Nome do cliente
+              example: "João Silva"
+            document:
+              type: string
+              description: Documento do cliente (CPF/CNPJ)
+              example: "12345678909"
+            phone:
+              type: string
+              description: Telefone do cliente
+              example: "11999999999"
+        metadata:
+          type: object
+          description: Metadados adicionais
+          example:
+            order_id: "order_123"
+            plan: "premium"
+        payment_method:
+          type: string
+          description: Método de pagamento
+          example: "card"
+        installments:
+          type: integer
+          minimum: 1
+          maximum: 12
+          description: Número de parcelas
+          example: 1
+
+  responses:
+    ValidationError:
+      description: Erro de validação
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Erro de validação"
+            details: "O campo 'amount' é obrigatório"
+
+    UnauthorizedError:
+      description: Não autorizado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Não autorizado"
+            details: "Token inválido ou expirado"
+
+    NotFoundError:
+      description: Recurso não encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Recurso não encontrado"
+            details: "Provedor de pagamento não encontrado"
+
+    ServerError:
+      description: Erro interno do servidor
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Erro interno do servidor"
+            details: "Ocorreu um erro ao processar a requisição"
+
+tags:
+  - name: Pagamentos
+    description: Operações relacionadas a pagamentos e provedores de pagamento

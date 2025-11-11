@@ -5,6 +5,11 @@ import { createClient } from '@supabase/supabase-js'
 const rawSupabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const rawSupabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
+// Security configuration
+const encryptionKey = import.meta.env.VITE_ENCRYPTION_KEY
+const rateLimitEnabled = import.meta.env.VITE_RATE_LIMIT_ENABLED === 'true'
+const securityAuditEnabled = import.meta.env.VITE_SECURITY_AUDIT_ENABLED === 'true'
+
 // Sanitize env values to avoid hidden CRLF/newlines breaking WebSocket auth
 const supabaseUrl = String(rawSupabaseUrl || '').replace(/\r?\n/g, '').trim()
 const supabaseAnonKey = String(rawSupabaseAnonKey || '').replace(/\r?\n/g, '').trim()
@@ -15,39 +20,35 @@ function createNoopClient(): any {
   // when environment variables are missing. It returns predictable results
   // and errors that can be handled gracefully by consumers.
 
-  // Helper: generic response objects
-  const listResponse = { data: [], error: new Error('Supabase não configurado'), count: 0 }
-  const singleResponse = { data: null, error: new Error('Supabase não configurado'), count: null }
-
-  // Helper: create a thenable builder that supports common Postgrest methods
-  function createBuilder(responseType: 'list' | 'single' = 'list') {
-    const baseResponse = responseType === 'list' ? listResponse : singleResponse
-
+  function createNoopBuilder(type: 'list' | 'single' = 'list') {
     const builder: any = {
-      select: (_columns?: string, _opts?: any) => builder,
-      insert: (_values?: any) => builder,
-      update: (_values?: any) => builder,
-      delete: () => builder,
-      eq: (_column?: string, _value?: any) => builder,
-      gt: (_column?: string, _value?: any) => builder,
-      lt: (_column?: string, _value?: any) => builder,
-      lte: (_column?: string, _value?: any) => builder,
-      gte: (_column?: string, _value?: any) => builder,
-      order: (_column?: string, _options?: any) => builder,
-      limit: (_count?: number) => builder,
-      single: () => createBuilder('single'),
-      // Thenable interface so `await` works
-      then: (resolve: (value: any) => void) => resolve(baseResponse),
-      catch: (reject: (reason?: any) => void) => reject(baseResponse.error),
+      data: type === 'list' ? [] : null,
+      error: new Error('Supabase não configurado'),
+      count: type === 'list' ? 0 : null,
     }
+
+    // Chainable no-op methods returning same object to preserve method availability
+    builder.select = (_columns?: string, _opts?: any) => builder
+    builder.insert = (_values?: any) => builder
+    builder.update = (_values?: any) => builder
+    builder.delete = () => builder
+    builder.eq = (_column?: string, _value?: any) => builder
+    builder.gt = (_column?: string, _value?: any) => builder
+    builder.lt = (_column?: string, _value?: any) => builder
+    builder.lte = (_column?: string, _value?: any) => builder
+    builder.gte = (_column?: string, _value?: any) => builder
+    builder.order = (_column?: string, _options?: any) => builder
+    builder.limit = (_count?: number) => builder
+    builder.range = (_from?: number, _to?: number) => builder
+    builder.single = () => { builder.data = null; builder.count = null; return builder }
 
     return builder
   }
 
   return {
     // Database API
-    from: (_table: string) => createBuilder('list'),
-    rpc: (_fn: string, _params?: Record<string, any>) => Promise.resolve(singleResponse),
+    from: (_table: string) => createNoopBuilder('list'),
+    rpc: async (_fn: string, _params?: Record<string, any>) => ({ data: null, error: new Error('Supabase não configurado'), count: null }),
 
     // Realtime/channel API
     channel: (_name: string) => ({
@@ -87,5 +88,11 @@ export const supabase = hasEnv
   : createNoopClient()
 
 export const isSupabaseConfigured = hasEnv
+
+export const securityConfig = {
+  encryptionKey,
+  rateLimitEnabled,
+  securityAuditEnabled
+}
 
 export default supabase

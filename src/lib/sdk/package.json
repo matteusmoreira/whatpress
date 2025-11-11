@@ -1,0 +1,59 @@
+{
+  "name": "@whatpress/sdk",
+  "version": "1.0.0",
+  "description": "Official JavaScript/TypeScript SDK for WhatsPress API",
+  "main": "dist/index.js",
+  "module": "dist/index.esm.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rollup -c",
+    "dev": "rollup -c -w",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "whatpress",
+    "payments",
+    "api",
+    "sdk",
+    "typescript",
+    "javascript",
+    "stripe",
+    "asaas",
+    "mercadopago",
+    "webhooks",
+    "brazil"
+  ],
+  "author": "WhatsPress Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/whatpress/sdk-javascript.git"
+  },
+  "bugs": {
+    "url": "https://github.com/whatpress/sdk-javascript/issues"
+  },
+  "homepage": "https://github.com/whatpress/sdk-javascript#readme",
+  "devDependencies": {
+    "@rollup/plugin-typescript": "^11.1.5",
+    "@types/jest": "^29.5.8",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0",
+    "eslint": "^8.54.0",
+    "jest": "^29.7.0",
+    "rollup": "^4.6.1",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.3.2"
+  },
+  "peerDependencies": {},
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

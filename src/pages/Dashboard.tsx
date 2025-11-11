@@ -36,6 +36,8 @@ import { RoleGuard } from '@/components/ui/role-guard'
 import { Shield, User, Crown, Settings } from 'lucide-react'
 import { MultiSessionManager } from '@/components/MultiSessionManager'
 import { Shuffle } from 'lucide-react'
+import { SecurityIndicator } from '@/components/security-indicator'
+import { PerformanceMonitor } from '@/components/PerformanceMonitor'
 
 interface DashboardMetrics {
   total_campaigns: number
@@ -350,6 +352,9 @@ export default function Dashboard() {
         </Card>
       )}
 
+      {/* Indicador de Segurança */}
+      <SecurityIndicator />
+
       {/* Seção de Instâncias */}
       <Card>
         <CardHeader>
@@ -412,6 +417,9 @@ export default function Dashboard() {
               </TabsTrigger>
               <TabsTrigger value="randomization" className="flex items-center gap-2">
                 <Shuffle className="h-4 w-4" /> Randomização
+              </TabsTrigger>
+              <TabsTrigger value="performance" className="flex items-center gap-2">
+                <Gauge className="h-4 w-4" /> Performance
               </TabsTrigger>
             </TabsList>
             <TabsContent value="overview" className="space-y-4">
@@ -519,6 +527,9 @@ export default function Dashboard() {
                   ))}
                 </div>
               </div>
+            </TabsContent>
+            <TabsContent value="performance" className="space-y-4">
+              <PerformanceMonitor />
             </TabsContent>
             <TabsContent value="details">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
