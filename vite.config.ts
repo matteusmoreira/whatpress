@@ -29,7 +29,7 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
-      external: ['ioredis', 'redis', 'bullmq', 'events', 'stream', 'util', 'net', 'tls', 'fs', 'path', 'url', 'dns', 'child_process', 'worker_threads', 'assert', 'crypto']
+      external: ['ioredis', 'redis', 'bullmq', 'events', 'stream', 'util', 'net', 'tls', 'fs', 'path', 'url', 'dns', 'child_process', 'worker_threads', 'assert']
     }
   }
 })
