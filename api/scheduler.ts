@@ -1,5 +1,4 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import fetch from 'node-fetch';
 
 // Simple scheduled worker to auto-start campaigns and process message_queue
 // Requires environment variables:
