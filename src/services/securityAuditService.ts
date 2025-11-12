@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, securityConfig } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { useTenant } from '@/hooks/useTenant';
 
@@ -34,7 +34,9 @@ class SecurityAuditService {
   private flushTimer?: NodeJS.Timeout;
 
   private constructor() {
-    this.startPeriodicFlush();
+    if (securityConfig.securityAuditEnabled) {
+      this.startPeriodicFlush();
+    }
   }
 
   static getInstance(): SecurityAuditService {
@@ -49,6 +51,7 @@ class SecurityAuditService {
    */
   async logEvent(event: AuditEvent): Promise<void> {
     try {
+      if (!securityConfig.securityAuditEnabled) return;
       const { data: { user } } = await supabase.auth.getUser();
       const { data: { session } } = await supabase.auth.getSession();
       
@@ -259,6 +262,10 @@ class SecurityAuditService {
         .insert(logsToSend);
 
       if (error) {
+        const msg = String((error as any)?.message || '')
+        if (msg.includes('Could not find the table') || msg.includes('schema cache')) {
+          return;
+        }
         throw error;
       }
 

@@ -33,12 +33,12 @@ export interface WhatsAppInstance {
 
 export interface InstanceHealthLog {
   id: string;
-  whatsapp_instance_id: string;
-  health_status: 'healthy' | 'warning' | 'critical' | 'offline';
-  response_time?: number;
-  error_message?: string;
+  instance_id: string;
+  status: 'healthy' | 'unhealthy' | 'timeout' | 'error';
+  response_time_ms?: number;
+  error_details?: string;
   metadata: any;
-  timestamp: string;
+  check_time: string;
 }
 
 export interface LoadBalancingConfig {
@@ -143,8 +143,8 @@ export const useMultiSession = (): UseMultiSessionReturn => {
         .from('instance_health_logs')
         .select('*')
         .eq('tenant_id', currentTenant.id)
-        .gte('timestamp', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-        .order('timestamp', { ascending: false })
+        .gte('check_time', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .order('check_time', { ascending: false })
         .limit(100);
 
       if (error) throw error;
@@ -302,9 +302,9 @@ export const useMultiSession = (): UseMultiSessionReturn => {
     const { data } = await supabase
       .from('instance_health_logs')
       .select('*')
-      .eq('whatsapp_instance_id', instanceId)
-      .gte('timestamp', since)
-      .order('timestamp', { ascending: false })
+      .eq('instance_id', instanceId)
+      .gte('check_time', since)
+      .order('check_time', { ascending: false })
     return data || []
   }, [])
 

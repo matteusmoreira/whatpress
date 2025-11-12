@@ -65,7 +65,13 @@ export function useCampaigns() {
           }
 
           const { data, error } = await query
-          if (error) throw error
+          if (error) {
+            const msg = String(error.message || '')
+            if (msg.includes('Could not find the table') || msg.includes('schema cache')) {
+              return []
+            }
+            throw error
+          }
           
           return data || []
         },

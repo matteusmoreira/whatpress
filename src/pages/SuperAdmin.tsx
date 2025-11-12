@@ -42,7 +42,8 @@ import { useTenants } from '@/hooks/useTenants'
 import { useTenant } from '@/hooks/useTenant'
 import { useNavigate } from 'react-router-dom'
 import { useQuotas } from '@/hooks/useQuotas'
-import { QuotaGrid, QuotaProgress } from '@/components/ui/quota-progress'
+import { QuotaProgressGrid } from '@/components/ui/quota-progress'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { SuperAdminOnly } from '@/components/RoleGuard'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
@@ -114,6 +115,10 @@ export default function SuperAdmin() {
     max_messages_per_month: 0
   })
   const [isQuotaDialogOpen, setIsQuotaDialogOpen] = useState(false)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [createName, setCreateName] = useState('')
+  const [createDomain, setCreateDomain] = useState('')
+  const [creating, setCreating] = useState(false)
 
   const { tenants, selectedTenantId, createTenant, loadMyTenants, loading, error } = useTenants()
   const { switchTenant } = useTenant()
@@ -261,6 +266,24 @@ export default function SuperAdmin() {
     }
   }, [updateTenantQuotas, logAction])
 
+  const deleteTenantQuotas = useCallback(async (tenantId: string) => {
+    try {
+      logAction(Actions.RESET_QUOTAS, Resources.QUOTAS, { tenantId, stage: 'attempt' }).catch(() => {})
+      const { error } = await supabase
+        .from('tenant_quotas')
+        .delete()
+        .eq('tenant_id', tenantId)
+      if (error) throw error
+      toast.success('Quotas excluídas com sucesso')
+      logAction(Actions.RESET_QUOTAS, Resources.QUOTAS, { tenantId, result: 'success' }).catch(() => {})
+      loadTenantsQuotaData()
+    } catch (error: any) {
+      console.error('Erro ao excluir quotas:', error)
+      toast.error('Erro ao excluir quotas')
+      logAction(Actions.RESET_QUOTAS, Resources.QUOTAS, { tenantId, result: 'error', error: error?.message || 'unknown' }).catch(() => {})
+    }
+  }, [loadTenantsQuotaData, logAction])
+
   useEffect(() => {
     loadTenantsQuotaData()
   }, [loadTenantsQuotaData])
@@ -275,15 +298,24 @@ export default function SuperAdmin() {
   )
 
   const handleCreateTenant = useCallback(async () => {
-    const name = window.prompt('Nome do tenant:')
-    if (!name) return
-    const domain = window.prompt('Domínio (opcional):') || undefined
+    setCreateDialogOpen(true)
+  }, [])
+
+  const submitCreateTenant = useCallback(async () => {
+    if (!createName.trim()) return
+    setCreating(true)
     try {
-      await createTenant(name, domain)
+      await createTenant(createName.trim(), createDomain.trim() || undefined)
+      toast.success('Igreja criada com sucesso')
+      setCreateDialogOpen(false)
+      setCreateName('')
+      setCreateDomain('')
     } catch (e: any) {
-      alert(e?.message || 'Erro ao criar tenant')
+      toast.error(e?.message || 'Erro ao criar igreja')
+    } finally {
+      setCreating(false)
     }
-  }, [createTenant])
+  }, [createName, createDomain, createTenant])
 
   const getStatusBadge = (status: string) => {
     const variants = {
@@ -318,7 +350,7 @@ export default function SuperAdmin() {
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-foreground">SuperAdmin</h1>
-                <p className="text-sm text-muted-foreground">Gerenciamento de Tenants e Sistema</p>
+                <p className="text-sm text-muted-foreground">Gerenciamento de Igrejas e Sistema</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -328,7 +360,7 @@ export default function SuperAdmin() {
               </Button>
               <Button className="gap-2" onClick={handleCreateTenant} disabled={loading}>
                 <Plus className="h-4 w-4" />
-                Novo Tenant
+                Nova Igreja
               </Button>
             </div>
           </div>
@@ -337,13 +369,13 @@ export default function SuperAdmin() {
 
       <div className="container mx-auto px-6 py-6">
         <Tabs value={selectedTab} onValueChange={setSelectedTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5">
-            <TabsTrigger value="overview">Visão Geral</TabsTrigger>
-            <TabsTrigger value="tenants">Tenants</TabsTrigger>
-            <TabsTrigger value="quotas">Quotas</TabsTrigger>
-            <TabsTrigger value="billing">Faturamento</TabsTrigger>
-            <TabsTrigger value="settings">Configurações</TabsTrigger>
-          </TabsList>
+            <TabsList className="grid w-full grid-cols-5">
+              <TabsTrigger value="overview">Visão Geral</TabsTrigger>
+            <TabsTrigger value="tenants">Igrejas</TabsTrigger>
+              <TabsTrigger value="quotas">Quotas</TabsTrigger>
+              <TabsTrigger value="billing">Faturamento</TabsTrigger>
+              <TabsTrigger value="settings">Configurações</TabsTrigger>
+            </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
             {/* Stats Grid */}
@@ -425,7 +457,7 @@ export default function SuperAdmin() {
               <div className="relative flex-1 max-w-sm">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar tenants..."
+                  placeholder="Buscar igrejas..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-10"
@@ -434,15 +466,15 @@ export default function SuperAdmin() {
               <Button variant="outline">Filtros</Button>
               <Button onClick={handleCreateTenant} disabled={loading}>
                 <Plus className="h-4 w-4 mr-2" />
-                Novo Tenant
+                Nova Igreja
               </Button>
             </div>
 
             {/* Tenants Table */}
             <Card>
               <CardHeader>
-                <CardTitle>Lista de Tenants</CardTitle>
-                <CardDescription>Gerencie todos os tenants do sistema</CardDescription>
+                <CardTitle>Lista de Igrejas</CardTitle>
+                <CardDescription>Gerencie todas as igrejas do sistema</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
@@ -528,7 +560,7 @@ export default function SuperAdmin() {
             <Card>
               <CardHeader>
                 <CardTitle>Gerenciamento de Quotas</CardTitle>
-                <CardDescription>Monitore e ajuste os limites de recursos dos tenants</CardDescription>
+                <CardDescription>Monitore e ajuste os limites de recursos das igrejas</CardDescription>
               </CardHeader>
               <CardContent>
                 {quotasLoading ? (
@@ -594,54 +626,30 @@ export default function SuperAdmin() {
                               <Edit className="h-4 w-4 mr-2" />
                               Editar
                             </Button>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="destructive" size="sm">
+                                  Excluir Quotas
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Isso removerá as quotas desta igreja. Você pode recriá-las aplicando um plano padrão depois.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogAction onClick={() => deleteTenantQuotas(tenantData.tenant_id)}>Excluir</AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
                           </div>
                         </div>
                         
-                        {/* Quota Progress Bars */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                          <QuotaProgress
-                            title="Usuários"
-                            used={tenantData.quotas.current_users}
-                            max={tenantData.quotas.max_users}
-                            percentage={tenantData.quotas.max_users > 0 ? Math.round((tenantData.quotas.current_users / tenantData.quotas.max_users) * 100) : 0}
-                            type="users"
-                          />
-                          <QuotaProgress
-                            title="Contatos"
-                            used={tenantData.quotas.current_contacts}
-                            max={tenantData.quotas.max_contacts}
-                            percentage={tenantData.quotas.max_contacts > 0 ? Math.round((tenantData.quotas.current_contacts / tenantData.quotas.max_contacts) * 100) : 0}
-                            type="contacts"
-                          />
-                          <QuotaProgress
-                            title="Conexões WhatsApp"
-                            used={tenantData.quotas.current_connections}
-                            max={tenantData.quotas.max_connections}
-                            percentage={tenantData.quotas.max_connections > 0 ? Math.round((tenantData.quotas.current_connections / tenantData.quotas.max_connections) * 100) : 0}
-                            type="connections"
-                          />
-                          <QuotaProgress
-                            title="Templates"
-                            used={tenantData.quotas.current_message_templates}
-                            max={tenantData.quotas.max_message_templates}
-                            percentage={tenantData.quotas.max_message_templates > 0 ? Math.round((tenantData.quotas.current_message_templates / tenantData.quotas.max_message_templates) * 100) : 0}
-                            type="templates"
-                          />
-                          <QuotaProgress
-                            title="Automações"
-                            used={tenantData.quotas.current_automations}
-                            max={tenantData.quotas.max_automations}
-                            percentage={tenantData.quotas.max_automations > 0 ? Math.round((tenantData.quotas.current_automations / tenantData.quotas.max_automations) * 100) : 0}
-                            type="automations"
-                          />
-                          <QuotaProgress
-                            title="Mensagens/mês"
-                            used={tenantData.quotas.used_messages_current_month}
-                            max={tenantData.quotas.max_messages_per_month}
-                            percentage={tenantData.quotas.max_messages_per_month > 0 ? Math.round((tenantData.quotas.used_messages_current_month / tenantData.quotas.max_messages_per_month) * 100) : 0}
-                            type="messages"
-                          />
-                        </div>
+                        {/* Quota Progress Grid */}
+                        <QuotaProgressGrid quota={tenantData.quotas} />
                       </div>
                     ))}
                     
@@ -791,6 +799,29 @@ export default function SuperAdmin() {
             >
               Salvar Alterações
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Dialog para criar igreja */}
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Criar Igreja</DialogTitle>
+            <DialogDescription>Defina o nome e, opcionalmente, o domínio</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="create-igreja-nome">Nome</Label>
+              <Input id="create-igreja-nome" value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="Ex.: Igreja Central" />
+            </div>
+            <div>
+              <Label htmlFor="create-igreja-dominio">Domínio (opcional)</Label>
+              <Input id="create-igreja-dominio" value={createDomain} onChange={(e) => setCreateDomain(e.target.value)} placeholder="Ex.: central.local" />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setCreateDialogOpen(false)} disabled={creating}>Cancelar</Button>
+            <Button onClick={submitCreateTenant} disabled={!createName || creating}>Criar</Button>
           </div>
         </DialogContent>
       </Dialog>

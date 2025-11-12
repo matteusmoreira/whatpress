@@ -101,11 +101,23 @@ export function useTenants() {
       .single()
 
     if (error) throw error
+    let createdTenant = tenant as Tenant | null
+    if (!createdTenant) {
+      const { data: fetched } = await supabase
+        .from('tenants')
+        .select('*')
+        .eq('name', name)
+        .limit(1)
+      if (Array.isArray(fetched) && fetched.length > 0) {
+        createdTenant = fetched[0] as Tenant
+      }
+    }
+    if (!createdTenant) throw new Error('Falha ao obter igreja criada')
 
     // Associate current user as SUPERADMIN of this tenant
     const { error: assocError } = await supabase
       .from('user_tenants')
-      .insert({ user_id: user.id, tenant_id: tenant.id, role: 'SUPERADMIN', status: 'active' })
+      .insert({ user_id: user.id, tenant_id: createdTenant.id, role: 'SUPERADMIN', status: 'active' })
 
     if (assocError) {
       console.warn('Tenant criado, mas falha ao associar usuário:', assocError.message)
@@ -114,16 +126,16 @@ export function useTenants() {
     // Ensure quotas exist
     await supabase
       .from('tenant_quotas')
-      .insert({ tenant_id: tenant.id })
+      .insert({ tenant_id: createdTenant.id })
       .select('*')
 
     // Select this tenant
-    localStorage.setItem(STORAGE_KEY, tenant.id)
+    localStorage.setItem(STORAGE_KEY, createdTenant.id)
 
     // Refresh list
     await loadMyTenants()
 
-    return tenant as Tenant
+    return createdTenant as Tenant
   }, [loadMyTenants])
 
   const assignUserToTenant = useCallback(async (userId: string, tenantId: string, role: TenantRole) => {

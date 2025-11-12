@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Building2, RefreshCw } from 'lucide-react'
+import { Building2, RefreshCw, UserPlus, Shield } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useTenant } from '@/hooks/useTenant'
 import { toast } from 'sonner'
@@ -47,6 +47,10 @@ export default function TenantPage() {
   const [editName, setEditName] = useState('')
   const [editDomain, setEditDomain] = useState('')
   const [editPlan, setEditPlan] = useState<'starter' | 'pro' | 'enterprise'>('starter')
+  const [tenantUsers, setTenantUsers] = useState<Array<{ id: string; email: string; full_name: string | null; role: 'SUPERADMIN' | 'ADMIN' | 'USER' }>>([])
+  const [selectedAdminId, setSelectedAdminId] = useState<string>('')
+  const [adminSaving, setAdminSaving] = useState(false)
+  const [inviteEmail, setInviteEmail] = useState('')
 
   const loadData = useCallback(async () => {
     if (!id) return
@@ -66,6 +70,25 @@ export default function TenantPage() {
         .eq('tenant_id', id)
         .single()
       if (!qe && q) setQuota(q as TenantQuota)
+      // Carregar usuários do tenant pelo backend /api/roles
+      try {
+        const tokenRes = await supabase.auth.getSession()
+        const token = tokenRes.data.session?.access_token || ''
+        if (token) {
+          const res = await fetch('/api/roles', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ action: 'list_users', tenantId: id })
+          })
+          const result = await res.json()
+          if (res.ok) {
+            const list = (result?.users || []).map((u: any) => ({ id: u.user_id, email: u.email || '', full_name: u.full_name || null, role: u.role }))
+            setTenantUsers(list)
+            const currentAdmin = list.find((u: any) => u.role === 'ADMIN')
+            setSelectedAdminId(currentAdmin?.id || '')
+          }
+        }
+      } catch {}
     } catch (e: any) {
       toast.error(e?.message || 'Erro ao carregar tenant')
     } finally {
@@ -132,6 +155,72 @@ export default function TenantPage() {
     setTenant({ ...tenant, name: editName, domain: editDomain || undefined, plan: editPlan })
     setEditOpen(false)
     toast.success('Tenant atualizado')
+  }
+
+  const saveAdminSelection = async () => {
+    if (!id) return
+    setAdminSaving(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token || ''
+      if (!token) throw new Error('Sessão não encontrada')
+
+      // Se não há admin selecionado, apenas retorna
+      if (!selectedAdminId) {
+        setAdminSaving(false)
+        return
+      }
+
+      // Promover selecionado para ADMIN
+      const res = await fetch('/api/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ action: 'update_role', tenantId: id, userId: selectedAdminId, newRole: 'ADMIN' })
+      })
+      const result = await res.json()
+      if (!res.ok) throw new Error(result?.error || 'Falha ao definir administrador')
+
+      // Opcional: rebaixar demais admins para USER
+      const otherAdmins = tenantUsers.filter(u => u.role === 'ADMIN' && u.id !== selectedAdminId)
+      for (const u of otherAdmins) {
+        try {
+          await fetch('/api/roles', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ action: 'update_role', tenantId: id, userId: u.id, newRole: 'USER' })
+          })
+        } catch {}
+      }
+
+      toast.success('Administrador atualizado')
+      await loadData()
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao salvar administrador')
+    } finally {
+      setAdminSaving(false)
+    }
+  }
+
+  const inviteAdminByEmail = async () => {
+    if (!id || !inviteEmail) return
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token || ''
+      if (!token) throw new Error('Sessão não encontrada')
+
+      const res = await fetch('/api/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ action: 'invite', tenantId: id, email: inviteEmail, role: 'ADMIN' })
+      })
+      const result = await res.json()
+      if (!res.ok) throw new Error(result?.error || 'Falha ao adicionar administrador')
+      toast.success('Administrador adicionado')
+      setInviteEmail('')
+      await loadData()
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao adicionar administrador')
+    }
   }
 
   return (
@@ -232,6 +321,50 @@ export default function TenantPage() {
               </div>
             ) : (
               <div className="text-sm text-muted-foreground">Sem dados de quotas</div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Administrador da Igreja</CardTitle>
+            <CardDescription>Selecione o administrador principal desta igreja</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {tenantUsers.length > 0 ? (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Selecionar administrador</p>
+                  <Select value={selectedAdminId} onValueChange={(v) => setSelectedAdminId(v)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Selecione o administrador" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {tenantUsers.map(u => (
+                        <SelectItem key={u.id} value={u.id}>{u.full_name || u.email} ({u.email})</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button onClick={saveAdminSelection} disabled={!selectedAdminId || adminSaving}>
+                    <Shield className="h-4 w-4 mr-2" />
+                    Salvar Administrador
+                  </Button>
+                </div>
+                <div className="border-t pt-4 space-y-2">
+                  <p className="text-sm text-muted-foreground">Adicionar por email</p>
+                  <div className="flex items-center gap-2">
+                    <Input placeholder="usuario@exemplo.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+                    <Button variant="secondary" onClick={inviteAdminByEmail} disabled={!inviteEmail}>
+                      <UserPlus className="h-4 w-4 mr-2" />
+                      Adicionar como Admin
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground">Nenhum usuário associado a esta igreja</div>
             )}
           </CardContent>
         </Card>

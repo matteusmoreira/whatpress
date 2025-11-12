@@ -72,6 +72,11 @@ export const RoleManagement: React.FC = () => {
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'ADMIN' | 'USER'>('USER');
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [createEmail, setCreateEmail] = useState('');
+  const [createPassword, setCreatePassword] = useState('');
+  const [createRole, setCreateRole] = useState<'ADMIN' | 'USER'>('USER');
+  const [createName, setCreateName] = useState('');
 
   // Filtros da aba Auditoria
   const [auditLimit, setAuditLimit] = useState<number>(50);
@@ -332,6 +337,44 @@ export const RoleManagement: React.FC = () => {
     }
   };
 
+  const handleCreateUser = async () => {
+    if (!currentTenant?.id || !createEmail || !createPassword) return;
+    try {
+      const token = await getAccessToken();
+      if (!token) throw new Error('Sessão não encontrada');
+
+      const res = await fetch('/api/roles', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          action: 'create_user',
+          tenantId: currentTenant.id,
+          email: createEmail,
+          password: createPassword,
+          role: createRole,
+          name: createName || undefined
+        })
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result?.error || 'Falha ao criar usuário');
+
+      toast.success('Usuário criado com sucesso');
+      logAction(Actions.INVITE, Resources.USERS, { email: createEmail, role: createRole, result: 'success' }).catch(() => {})
+      setIsCreateDialogOpen(false);
+      setCreateEmail('');
+      setCreatePassword('');
+      setCreateRole('USER');
+      setCreateName('');
+      loadUsers();
+    } catch (error) {
+      console.error('Erro ao criar usuário:', error);
+      toast.error('Erro ao criar usuário');
+    }
+  };
+
   const handleUpdatePermission = async (permissionId: string, allowed: boolean) => {
     try {
       const token = await getAccessToken();
@@ -445,6 +488,54 @@ export const RoleManagement: React.FC = () => {
                   <Button onClick={handleInviteUser} disabled={!inviteEmail}>
                     Convidar
                   </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </PermissionGuard>
+          <PermissionGuard allowedRoles={['ADMIN', 'SUPERADMIN']} resource={Resources.USERS} action={Actions.INVITE} mode="hide">
+            <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="secondary">
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Criar Usuário
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Criar Usuário</DialogTitle>
+                  <DialogDescription>
+                    Crie um usuário com senha sem convite por email
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="create-name">Nome</Label>
+                    <Input id="create-name" value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="Nome completo (opcional)" />
+                  </div>
+                  <div>
+                    <Label htmlFor="create-email">Email</Label>
+                    <Input id="create-email" type="email" value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} placeholder="usuario@exemplo.com" />
+                  </div>
+                  <div>
+                    <Label htmlFor="create-password">Senha</Label>
+                    <Input id="create-password" type="password" value={createPassword} onChange={(e) => setCreatePassword(e.target.value)} placeholder="Senha forte" />
+                  </div>
+                  <div>
+                    <Label htmlFor="create-role">Role</Label>
+                    <Select value={createRole} onValueChange={(value: 'ADMIN' | 'USER') => setCreateRole(value)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="USER">Usuário</SelectItem>
+                        <SelectItem value="ADMIN">Administrador</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>Cancelar</Button>
+                  <Button onClick={handleCreateUser} disabled={!createEmail || !createPassword}>Criar</Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>

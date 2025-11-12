@@ -27,7 +27,7 @@ export function Header({ onMenuClick }: HeaderProps) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const { currentTenant, tenants, switchTenant, loading: tenantLoading } = useTenant()
-  const { currentRole, logAction } = useRoleContext()
+  const { currentRole, isSuperAdmin, logAction } = useRoleContext()
 
   return (
     <header className="h-16 border-b border-border/40 backdrop-blur-sm bg-background/80 sticky top-0 z-50">
@@ -52,8 +52,8 @@ export function Header({ onMenuClick }: HeaderProps) {
             />
           </div>
 
-          {/* Global Tenant Selector (non-superadmin support) */}
-          {!tenantLoading && tenants.length > 0 && (
+          {/* Tenant Selector: mostrar apenas para superadmin ou quando há múltiplas igrejas */}
+          {!tenantLoading && (isSuperAdmin || tenants.length > 1) && (
             <div className="hidden md:flex md:items-center md:space-x-2">
               <Select 
                 value={currentTenant?.id} 
@@ -150,7 +150,7 @@ export function Header({ onMenuClick }: HeaderProps) {
                     )}
                   </div>
                   {/* Mobile Tenant Selector */}
-                  {!tenantLoading && tenants.length > 0 && (
+                  {!tenantLoading && (isSuperAdmin || tenants.length > 1) && (
                     <div className="md:hidden mt-3">
                       <span className="text-xs text-muted-foreground">Tenant</span>
                       <Select 
@@ -174,6 +174,12 @@ export function Header({ onMenuClick }: HeaderProps) {
                           ))}
                         </SelectContent>
                       </Select>
+                    </div>
+                  )}
+                  {/* Mostrar nome da igreja quando seletor oculto */}
+                  {!tenantLoading && tenants.length === 1 && !isSuperAdmin && currentTenant?.name && (
+                    <div className="md:hidden mt-3 text-xs text-muted-foreground">
+                      Igreja: <span className="font-medium text-foreground">{currentTenant.name}</span>
                     </div>
                   )}
                 </div>

@@ -126,6 +126,7 @@ export class AnalyticsService {
   private sessionId: string | null = null
   private userId: string | null = null
   private tenantId: string | null = null
+  private enabled: boolean = String((import.meta as any).env?.VITE_ANALYTICS_ENABLED || '').toLowerCase() !== 'false'
 
   constructor() {
     this.initializeSession()
@@ -155,6 +156,7 @@ export class AnalyticsService {
   async track(event: AnalyticsEvent, properties: Record<string, any> = {}): Promise<void> {
     return monitorFunction('analytics.track', async () => {
       try {
+        if (!this.enabled) return
         const eventData: AnalyticsEventData = {
           event,
           userId: this.userId || undefined,
@@ -185,6 +187,7 @@ export class AnalyticsService {
   async trackBatch(events: Array<{ event: AnalyticsEvent; properties?: Record<string, any> }>): Promise<void> {
     return monitorFunction('analytics.trackBatch', async () => {
       try {
+        if (!this.enabled) return
         const eventDataArray = events.map(({ event, properties = {} }) => ({
           event,
           userId: this.userId || undefined,

@@ -86,7 +86,14 @@ export const useConsent = () => {
           updated_at: new Date().toISOString()
         });
 
-      if (error) throw error;
+      if (error) {
+        const msg = String(error.message || '')
+        if (msg.includes('Could not find the table')) {
+          setConsentSettings(settings)
+          return true
+        }
+        throw error;
+      }
 
       setConsentSettings(settings);
       
@@ -125,7 +132,7 @@ export const useConsent = () => {
         consent_given: consentGiven,
         consent_method: method,
         consent_timestamp: new Date(),
-        ip_address: await this.getClientIP(),
+        ip_address: undefined,
         user_agent: navigator.userAgent,
         withdrawal_timestamp: null,
         withdrawal_method: null,

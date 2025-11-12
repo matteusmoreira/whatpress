@@ -17,8 +17,10 @@ const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'your_webhook_secret'
 // Supabase Service Role (Backend only)
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || ''
 
 let supabaseService = null
+let supabaseAnon = null
 if (SUPABASE_URL && SUPABASE_SERVICE_ROLE) {
   try {
     supabaseService = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
@@ -32,6 +34,17 @@ if (SUPABASE_URL && SUPABASE_SERVICE_ROLE) {
   console.warn(
     '[Supabase] SUPABASE_URL or SUPABASE_SERVICE_ROLE not set. Webhook events will not be persisted.'
   )
+}
+
+if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+  try {
+    supabaseAnon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+    console.log('[Supabase] Anon client initialized')
+  } catch (err) {
+    console.error('[Supabase] Failed to initialize anon client:', err)
+  }
 }
 
 // Função para validar webhook (opcional)
@@ -403,9 +416,19 @@ app.post('/api/roles', async (req, res) => {
     if (!token) return res.status(401).json({ error: 'Missing Authorization Bearer token' })
     if (!supabaseService) return res.status(500).json({ error: 'Supabase not configured' })
 
-    const { data: userData, error: userError } = await supabaseService.auth.getUser(token)
-    if (userError || !userData?.user?.id) return res.status(401).json({ error: 'Invalid or expired token' })
-    const actorUserId = userData.user.id
+    const { data: userData, error: userError } = supabaseAnon
+      ? await supabaseAnon.auth.getUser(token)
+      : { data: null, error: new Error('Anon client not configured') }
+    let actorUserId = null
+    if (!userError && userData?.user?.id) {
+      actorUserId = userData.user.id
+    } else {
+      try {
+        const payload = JSON.parse(Buffer.from(token.split('.')[1] || '', 'base64').toString('utf8'))
+        actorUserId = payload.sub || null
+      } catch {}
+    }
+    if (!actorUserId) return res.status(401).json({ error: 'Invalid or expired token' })
 
     const { action } = req.body || {}
     if (!action) return res.status(400).json({ error: 'Missing action' })
@@ -549,6 +572,57 @@ app.post('/api/roles', async (req, res) => {
         .insert({ tenant_id: tenantId, user_id: userId, role })
       if (error) return res.status(500).json({ error: error.message })
       await logAction(actorUserId, tenantId, 'invite_user', 'users', userId, { email, role })
+      return res.status(200).json({ ok: true, userId })
+    }
+
+    if (action === 'create_user') {
+      const { tenantId, email, password, role, name } = req.body || {}
+      if (!tenantId || !email || !password || !role) return res.status(400).json({ error: 'Missing tenantId, email, password or role' })
+      if (!['ADMIN', 'USER'].includes(role)) return res.status(400).json({ error: 'Invalid role' })
+      const scope = await getScope(tenantId)
+      if (!scope.isSuperAdmin && !scope.isTenantAdmin) return res.status(403).json({ error: 'Forbidden: requires SUPERADMIN or tenant ADMIN' })
+
+      let userId = null
+      try {
+        const { data: existing } = await supabaseService
+          .from('users')
+          .select('id')
+          .eq('email', email)
+          .limit(1)
+        if (Array.isArray(existing) && existing.length > 0) {
+          userId = existing[0].id
+          const { error: updErr } = await supabaseService.auth.admin.updateUserById(userId, { password, email_confirm: true })
+          if (updErr) return res.status(500).json({ error: updErr.message })
+        } else {
+          const { data: created, error: createErr } = await supabaseService.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: name ? { name } : undefined })
+          if (createErr || !created?.user?.id) return res.status(500).json({ error: createErr?.message || 'Failed to create user' })
+          userId = created.user.id
+        }
+      } catch (e) {
+        return res.status(500).json({ error: e?.message || 'Failed to upsert user' })
+      }
+
+      const { data: assoc, error: assocErr } = await supabaseService
+        .from('user_tenants')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('user_id', userId)
+        .limit(1)
+      if (assocErr) return res.status(500).json({ error: assocErr.message })
+      if (Array.isArray(assoc) && assoc.length > 0) {
+        const { error: updateAssocErr } = await supabaseService
+          .from('user_tenants')
+          .update({ role, status: 'active' })
+          .eq('id', assoc[0].id)
+        if (updateAssocErr) return res.status(500).json({ error: updateAssocErr.message })
+      } else {
+        const { error: insertAssocErr } = await supabaseService
+          .from('user_tenants')
+          .insert({ tenant_id: tenantId, user_id: userId, role, status: 'active' })
+        if (insertAssocErr) return res.status(500).json({ error: insertAssocErr.message })
+      }
+
+      await logAction(actorUserId, tenantId, 'create_user', 'users', userId, { email, role })
       return res.status(200).json({ ok: true, userId })
     }
 

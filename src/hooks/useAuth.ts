@@ -39,7 +39,13 @@ export function useAuth() {
             .eq('id', auth.user!.id)
             .single()
           
-          if (error) throw error
+          if (error) {
+            const msg = String(error.message || '')
+            if (msg.includes('Could not find the table') || msg.includes('schema cache')) {
+              return null
+            }
+            throw error
+          }
           return data
         },
         {

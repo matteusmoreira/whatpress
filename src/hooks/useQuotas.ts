@@ -136,16 +136,29 @@ export const useQuotas = () => {
     }
 
     try {
-      const { data, error: alertsError } = await supabase
+      let query = supabase
         .from('quota_alerts')
         .select('*')
         .eq('tenant_id', currentTenant.id)
-        .eq('acknowledged', false)
         .order('created_at', { ascending: false })
-        .limit(10);
+        .limit(10)
 
-      if (alertsError) throw alertsError;
-      setAlerts(data || []);
+      let { data, error: alertsError } = await query
+      if (alertsError) {
+        const msg = String(alertsError.message || '')
+        if (msg.includes('acknowledged') || alertsError.code === '42703') {
+          const fallback = await supabase
+            .from('quota_alerts')
+            .select('*')
+            .eq('tenant_id', currentTenant.id)
+            .order('created_at', { ascending: false })
+            .limit(10)
+          data = fallback.data || []
+        } else {
+          throw alertsError
+        }
+      }
+      setAlerts(data || [])
     } catch (err) {
       console.error('Erro ao buscar alertas:', err);
     }

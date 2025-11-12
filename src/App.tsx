@@ -95,6 +95,11 @@ function App() {
               </RequireAuth>
             }>
               <Route index element={<SuperAdminPage />} />
+              <Route path="tenants" element={<SuperAdminPage />} />
+              <Route path="users" element={<Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Carregando...</div>}><RoleManagementPage /></Suspense>} />
+              <Route path="billing" element={<QuotaManagementPage />} />
+              <Route path="system" element={<SecuritySettingsPage />} />
+              <Route path="settings" element={<SettingsPage />} />
               <Route path="tenant/:id" element={<TenantPage />} />
               {/* Rota de teste de erro controlado (apenas SUPERADMIN) */}
               <Route path="test-error" element={<DevErrorPage />} />

@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils'
 
 const navigation = [
   { name: 'Dashboard', href: '/superadmin', icon: BarChart3 },
-  { name: 'Tenants', href: '/superadmin/tenants', icon: Building2 },
+  { name: 'Igrejas', href: '/superadmin/tenants', icon: Building2 },
   { name: 'Usuários', href: '/superadmin/users', icon: Users },
   { name: 'Faturamento', href: '/superadmin/billing', icon: DollarSign },
   { name: 'Sistema', href: '/superadmin/system', icon: Database },

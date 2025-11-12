@@ -206,7 +206,7 @@ export default function Dashboard() {
   }, [campaigns, instances])
 
   const healthStatus = getHealthStatus()
-  const runningCampaigns = campaigns.filter(c => c.status === 'running')
+  const runningCampaigns = Array.isArray(campaigns) ? campaigns.filter(c => c.status === 'running') : []
 
   return (
     <div className="space-y-6">
@@ -542,7 +542,7 @@ export default function Dashboard() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
-                      {campaigns.map(c => (
+                      {Array.isArray(campaigns) && campaigns.map(c => (
                         <div key={c.id} className="flex items-center justify-between p-2 border rounded">
                           <div>
                             <p className="font-medium">{c.name}</p>
@@ -563,7 +563,7 @@ export default function Dashboard() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
-                      {instances.map(i => (
+                      {Array.isArray(instances) && instances.map(i => (
                         <div key={i.id} className="flex items-center justify-between p-2 border rounded">
                           <div>
                             <p className="font-medium">{i.name}</p>
@@ -588,7 +588,7 @@ export default function Dashboard() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
-                      {randomizationProfiles.map(p => (
+                      {Array.isArray(randomizationProfiles) && randomizationProfiles.map(p => (
                         <div key={p.id} className="flex items-center justify-between p-2 border rounded">
                           <div>
                             <p className="font-medium">{p.name}</p>
@@ -609,7 +609,7 @@ export default function Dashboard() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
-                      {rateLimitConfigs.map(c => (
+                      {Array.isArray(rateLimitConfigs) && rateLimitConfigs.map(c => (
                         <div key={c.id} className="flex items-center justify-between p-2 border rounded">
                           <div>
                             <p className="font-medium">{c.name}</p>
