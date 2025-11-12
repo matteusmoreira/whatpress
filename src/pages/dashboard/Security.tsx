@@ -6,16 +6,12 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { 
   Shield, 
-  Lock, 
   Key, 
-  FileText, 
   Download, 
   Trash2, 
   AlertTriangle,
   CheckCircle,
-  Clock,
-  User,
-  Database
+  Clock
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useEncryption } from '@/hooks/useEncryption'
@@ -29,16 +25,15 @@ export function Security() {
   const { 
     isEncryptionAvailable, 
     rotateKey, 
-    anonymizeData, 
-    pseudonymizeData, 
     exportUserData, 
-    deleteUserData 
+    deleteUserData,
+    getKeyStatus,
   } = useEncryption()
   const { logSecurityEvent } = useSecurityAudit()
 // toast notifications are handled by sonner
 
   const [loading, setLoading] = useState(false)
-  const [auditLogs, setAuditLogs] = useState<any[]>([])
+  const [auditLogs] = useState<any[]>([])
   const [encryptionStatus, setEncryptionStatus] = useState({
     enabled: false,
     keyAge: 0,
@@ -52,10 +47,13 @@ export function Security() {
   const loadSecurityData = async () => {
     try {
       // Carregar status da criptografia
+      const status = await getKeyStatus()
+      const lastRotation = status?.createdAt ?? null
+      const keyAge = lastRotation ? Math.floor((Date.now() - lastRotation.getTime()) / (24 * 60 * 60 * 1000)) : 0
       setEncryptionStatus({
         enabled: isEncryptionAvailable,
-        keyAge: 0,
-        lastRotation: new Date() // TODO: obter do serviço
+        keyAge,
+        lastRotation
       })
 
       // Registrar acesso à página de segurança
@@ -440,16 +438,4 @@ export function Security() {
       </Tabs>
     </div>
   )
-}
-
-// Função auxiliar para obter IP do cliente
-async function getClientIPAddress(): Promise<string> {
-  try {
-    const response = await fetch('https://api.ipify.org?format=json');
-    const data = await response.json();
-    return data.ip;
-  } catch (error) {
-    console.error('Erro ao obter IP do cliente:', error);
-    return 'unknown';
-  }
 }

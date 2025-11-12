@@ -28,13 +28,6 @@ export default defineConfig({
     exclude: ['ioredis', 'redis', 'bullmq']
   },
   build: {
-    rollupOptions: {
-      onwarn(warning, warn) {
-        // Suprimir avisos de variáveis não utilizadas durante o build
-        if (warning.code === 'UNUSED_EXTERNAL_IMPORT') return
-        if (warning.code === 'UNRESOLVED_IMPORT') return
-        warn(warning)
-      }
-    }
+    rollupOptions: {}
   }
 })

@@ -37,6 +37,7 @@ type TenantQuota = {
 
 export default function TenantPage() {
   const { id } = useParams()
+  const tenantId = id || ''
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { switchTenant } = useTenant()
@@ -53,7 +54,7 @@ export default function TenantPage() {
   const [inviteEmail, setInviteEmail] = useState('')
 
   const loadData = useCallback(async () => {
-    if (!id) return
+    if (!tenantId) return
     setLoading(true)
     try {
       const { data: t, error: te } = await supabase
@@ -78,7 +79,7 @@ export default function TenantPage() {
           const res = await fetch('/api/roles', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-            body: JSON.stringify({ action: 'list_users', tenantId: id })
+          body: JSON.stringify({ action: 'list_users', tenantId })
           })
           const result = await res.json()
           if (res.ok) {
@@ -88,7 +89,9 @@ export default function TenantPage() {
             setSelectedAdminId(currentAdmin?.id || '')
           }
         }
-      } catch {}
+      } catch (err) {
+        console.warn('Falha ao carregar usuários do tenant', err)
+      }
     } catch (e: any) {
       toast.error(e?.message || 'Erro ao carregar tenant')
     } finally {
@@ -97,8 +100,9 @@ export default function TenantPage() {
   }, [id])
 
   useEffect(() => {
+    verifyAccess()
     loadData()
-  }, [loadData])
+  }, [loadData, verifyAccess])
 
   useEffect(() => {
     if (searchParams.get('tab') === 'settings' && tenant) {
@@ -158,7 +162,7 @@ export default function TenantPage() {
   }
 
   const saveAdminSelection = async () => {
-    if (!id) return
+    if (!tenantId) return
     setAdminSaving(true)
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -175,7 +179,7 @@ export default function TenantPage() {
       const res = await fetch('/api/roles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ action: 'update_role', tenantId: id, userId: selectedAdminId, newRole: 'ADMIN' })
+        body: JSON.stringify({ action: 'update_role', tenantId: tenantId, userId: selectedAdminId, newRole: 'ADMIN' })
       })
       const result = await res.json()
       if (!res.ok) throw new Error(result?.error || 'Falha ao definir administrador')
@@ -187,9 +191,11 @@ export default function TenantPage() {
           await fetch('/api/roles', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-            body: JSON.stringify({ action: 'update_role', tenantId: id, userId: u.id, newRole: 'USER' })
+            body: JSON.stringify({ action: 'update_role', tenantId: tenantId, userId: u.id, newRole: 'USER' })
           })
-        } catch {}
+        } catch (err) {
+          console.warn('Falha ao atualizar role de outros admins', err)
+        }
       }
 
       toast.success('Administrador atualizado')
@@ -202,7 +208,7 @@ export default function TenantPage() {
   }
 
   const inviteAdminByEmail = async () => {
-    if (!id || !inviteEmail) return
+    if (!tenantId || !inviteEmail) return
     try {
       const { data: { session } } = await supabase.auth.getSession()
       const token = session?.access_token || ''
@@ -211,7 +217,7 @@ export default function TenantPage() {
       const res = await fetch('/api/roles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ action: 'invite', tenantId: id, email: inviteEmail, role: 'ADMIN' })
+        body: JSON.stringify({ action: 'invite', tenantId: tenantId, email: inviteEmail, role: 'ADMIN' })
       })
       const result = await res.json()
       if (!res.ok) throw new Error(result?.error || 'Falha ao adicionar administrador')

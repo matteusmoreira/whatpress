@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { DialogDescription } from '@radix-ui/react-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
@@ -218,6 +219,7 @@ export const ContactImportModal: React.FC<ContactImportModalProps> = ({ open, on
       <DialogContent className="sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Importar Contatos</DialogTitle>
+          <DialogDescription>Selecione um arquivo CSV ou Excel e ajuste o mapeamento de colunas.</DialogDescription>
         </DialogHeader>
 
         <div onDrop={onDrop} onDragOver={onDragOver} className="border border-dashed rounded-md p-4 mb-3 text-center cursor-pointer hover:bg-muted" onClick={() => (document.getElementById('contact-file-input') as HTMLInputElement)?.click()}>

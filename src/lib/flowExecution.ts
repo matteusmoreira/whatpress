@@ -1,6 +1,5 @@
 import { supabase } from './supabase'
-import { redis } from './redis'
-import { Flow, FlowNode, FlowEdge, FLOW_NODE_TYPES, EXECUTION_STATUSES } from './flows'
+import { Flow, FlowNode, FLOW_NODE_TYPES, EXECUTION_STATUSES } from './flows'
 import { sendMessage } from './messages'
 import { updateContact, addTagToContact, removeTagFromContact } from './contacts'
 import { addQueueJob, QUEUE_TYPES } from './queue'
@@ -158,7 +157,7 @@ export class FlowExecutionEngine {
   }
 
   // Executores de nós específicos
-  private async executeStartNode(node: FlowNode): Promise<NodeExecutionResult> {
+  private async executeStartNode(_node: FlowNode): Promise<NodeExecutionResult> {
     return {
       success: true,
       logs: [{
@@ -168,7 +167,7 @@ export class FlowExecutionEngine {
     }
   }
 
-  private async executeEndNode(node: FlowNode): Promise<NodeExecutionResult> {
+  private async executeEndNode(_node: FlowNode): Promise<NodeExecutionResult> {
     return {
       success: true,
       logs: [{

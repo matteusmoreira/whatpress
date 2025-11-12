@@ -296,8 +296,8 @@ export const cacheUtils = {
   // Obter estatísticas do Redis
   getStats: async () => {
     try {
-      const info = await redis.info()
-      const memory = await redis.memory('usage', 'samples=0')
+      await redis.info()
+      await redis.memory('usage', 'samples=0')
       
       return {
         connected: redis.status === 'ready',

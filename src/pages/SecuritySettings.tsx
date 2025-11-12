@@ -68,7 +68,6 @@ export default function SecuritySettingsPage() {
     terms_of_service_url: ''
   });
 
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -87,7 +86,6 @@ export default function SecuritySettingsPage() {
   const loadSecuritySettings = async () => {
     if (!currentTenant?.id) return;
 
-    setLoading(true);
     try {
       const { data, error } = await supabase
         .from('tenant_settings')
@@ -119,8 +117,6 @@ export default function SecuritySettingsPage() {
         status: 'error',
         error_message: error instanceof Error ? error.message : 'Erro desconhecido'
       });
-    } finally {
-      setLoading(false);
     }
   };
 

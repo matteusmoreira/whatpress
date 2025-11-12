@@ -30,7 +30,7 @@ import { AdminOnly } from '@/components/RoleGuard';
 import { QuotaProgressGrid } from '@/components/ui/quota-progress';
 import { QuotaAlertList, QuotaCriticalBanner } from '@/components/ui/quota-alert';
 import { toast } from 'sonner';
-import { useRoleContext } from '@/contexts/RoleContext';
+import { useRoleContext } from '@/contexts/useRoleContext';
 import { QuotaAlertsManager } from '@/components/QuotaAlertsManager';
 
 interface QuotaLimitsForm {

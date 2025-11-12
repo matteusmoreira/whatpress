@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { 
   Card, 
   CardContent, 
@@ -21,13 +20,7 @@ import {
   DialogTitle, 
   DialogTrigger 
 } from '@/components/ui/dialog'
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
-} from '@/components/ui/select'
+/* removido select não utilizado */
 import { Progress } from '@/components/ui/progress'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -35,16 +28,9 @@ import {
   Smartphone,
   Settings,
   CheckCircle,
-  AlertCircle,
-  Clock,
   Zap,
-  Shield,
-  Globe,
   Key,
-  Webhook,
-  Database,
   Activity,
-  Users,
   BarChart3,
   RefreshCw,
   Plus,
@@ -54,7 +40,6 @@ import {
   Eye,
   EyeOff,
   Download,
-  Upload,
   Link,
   Unlink,
   QrCode
@@ -62,63 +47,13 @@ import {
 import { useEvolutionApi } from '@/hooks/useEvolutionApi'
 import { useToast } from '@/hooks/use-toast'
 
-// Mock data para demonstração
-const mockInstances = [
-  {
-    id: '1',
-    name: 'Instância Principal',
-    phoneNumber: '+55 11 99999-9999',
-    status: 'connected',
-    qrCode: null,
-    lastActivity: '2024-01-15 14:30',
-    messagesCount: 1250,
-    webhookUrl: 'https://api.exemplo.com/webhook/whatsapp',
-    apiKey: 'wa_live_abc123...',
-    businessAccountId: 'BA123456789',
-    appId: 'APP987654321'
-  },
-  {
-    id: '2',
-    name: 'Instância Teste',
-    phoneNumber: '+55 11 88888-8888',
-    status: 'disconnected',
-    qrCode: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-    lastActivity: '2024-01-14 09:15',
-    messagesCount: 45,
-    webhookUrl: 'https://api.exemplo.com/webhook/test',
-    apiKey: 'wa_test_xyz789...',
-    businessAccountId: 'BA987654321',
-    appId: 'APP123456789'
-  }
-]
-
-const mockWebhooks = [
-  {
-    id: '1',
-    name: 'Webhook Principal',
-    url: 'https://api.exemplo.com/webhook/messages',
-    events: ['message', 'status', 'delivery'],
-    status: 'active',
-    lastTrigger: '2024-01-15 14:25',
-    successRate: 98.5
-  },
-  {
-    id: '2',
-    name: 'Webhook Backup',
-    url: 'https://backup.exemplo.com/webhook',
-    events: ['message'],
-    status: 'inactive',
-    lastTrigger: '2024-01-10 11:30',
-    successRate: 95.2
-  }
-]
+/* dados mock removidos */
 
 export default function WhatsAppIntegration() {
-  const navigate = useNavigate()
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [showWebhookDialog, setShowWebhookDialog] = useState(false)
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false)
-  const [selectedInstance, setSelectedInstance] = useState<string>('')
+  /* estado não utilizado removido */
   const [showApiKey, setShowApiKey] = useState<{[key: string]: boolean}>({})
   const [newInstance, setNewInstance] = useState({
     name: '',
@@ -135,7 +70,7 @@ export default function WhatsAppIntegration() {
   })
 
   // Integração real: usar hook que lê do Supabase/Evolution API
-  const { instances, loading, createInstance, connect, disconnect, checkConnectionStatus, deleteInstance, pairingCodes } = useEvolutionApi()
+  const { instances, createInstance, connect, disconnect, checkConnectionStatus, deleteInstance, pairingCodes } = useEvolutionApi()
   const { toast } = useToast()
   const connectedCount = instances.filter(i => i.status === 'connected').length
 
@@ -200,7 +135,9 @@ export default function WhatsAppIntegration() {
     try {
       await navigator.clipboard.writeText(code)
       toast({ title: 'Código copiado', description: 'Cole o código no WhatsApp para conectar.' })
-    } catch {}
+    } catch (err) {
+      console.warn('Falha ao copiar código de pareamento', err)
+    }
   }
 
   return (
@@ -541,7 +478,7 @@ export default function WhatsAppIntegration() {
           </div>
 
           <div className="grid gap-4">
-            {mockWebhooks.map((webhook) => (
+            {([] as any[]).map((webhook) => (
               <Card key={webhook.id}>
                 <CardHeader>
                   <div className="flex items-center justify-between">

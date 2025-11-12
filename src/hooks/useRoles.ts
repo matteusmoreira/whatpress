@@ -1,5 +1,5 @@
 // Compatibility shim: useRoles now proxies to RoleContext. This preserves the old API while the app migrates to useRoleContext.
-import { useRoleContext } from '@/contexts/RoleContext'
+import { useRoleContext } from '@/contexts/useRoleContext'
 
 export type UserRoleType = 'SUPERADMIN' | 'ADMIN' | 'USER' | 'NONE'
 

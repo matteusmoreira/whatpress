@@ -15,7 +15,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useNavigate } from 'react-router-dom'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useTenant } from '@/hooks/useTenant'
-import { useRoleContext } from '@/contexts/RoleContext'
+import { useRoleContext } from '@/contexts/useRoleContext'
 
 interface HeaderProps {
   onMenuClick?: () => void

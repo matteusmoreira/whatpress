@@ -1,6 +1,4 @@
 import { supabase, securityConfig } from '@/lib/supabase';
-import { useAuth } from '@/hooks/useAuth';
-import { useTenant } from '@/hooks/useTenant';
 
 export interface SecurityLog {
   id?: string;
@@ -53,7 +51,6 @@ class SecurityAuditService {
     try {
       if (!securityConfig.securityAuditEnabled) return;
       const { data: { user } } = await supabase.auth.getUser();
-      const { data: { session } } = await supabase.auth.getSession();
       
       // Obter tenant_id do token JWT ou localStorage
       const tenantId = this.getCurrentTenantId();

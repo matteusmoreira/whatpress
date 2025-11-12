@@ -146,7 +146,7 @@ class BackupService {
         .update({ status: 'running' })
         .eq('id', backupId)
 
-      let allData: any = {}
+      const allData: any = {}
       let totalRows = 0
 
       // Buscar dados de cada tabela
@@ -194,7 +194,7 @@ class BackupService {
       const checksum = await this.calculateChecksum(backupContent)
 
       // Fazer upload para o Supabase Storage
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from('backups')
         .upload(`${config.tenant_id}/${backupRecord.filename}`, backupContent, {
           contentType: 'application/json',

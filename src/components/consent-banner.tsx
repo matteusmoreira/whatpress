@@ -39,34 +39,8 @@ export function ConsentBanner({ className, onConsentGiven, onConsentDenied }: Co
 
     setLoading(true);
     try {
-      // Registrar consentimentos
-      const consentPromises = [];
-
-      if (consentOptions.messages) {
-        consentPromises.push(
-          recordConsent(user.id, 'whatsapp_messages', true, 'website_form', 'Consentimento via banner LGPD')
-        );
-      }
-
-      if (consentOptions.marketing) {
-        consentPromises.push(
-          recordConsent(user.id, 'marketing', true, 'website_form', 'Consentimento via banner LGPD')
-        );
-      }
-
-      if (consentOptions.dataProcessing) {
-        consentPromises.push(
-          recordConsent(user.id, 'data_processing', true, 'website_form', 'Consentimento via banner LGPD')
-        );
-      }
-
-      if (consentOptions.thirdPartySharing) {
-        consentPromises.push(
-          recordConsent(user.id, 'third_party_sharing', true, 'website_form', 'Consentimento via banner LGPD')
-        );
-      }
-
-      await Promise.all(consentPromises);
+      // Registrar apenas evento de aceitação (consentimento em nível de usuário)
+      // O registro de consentimento por contato deve ser feito onde o contato existe
 
       // Log de auditoria
       await logEvent({
@@ -100,15 +74,7 @@ export function ConsentBanner({ className, onConsentGiven, onConsentDenied }: Co
 
     setLoading(true);
     try {
-      // Registrar negação de consentimento
-      const consentPromises = [
-        recordConsent(user.id, 'whatsapp_messages', false, 'website_form', 'Consentimento negado via banner LGPD'),
-        recordConsent(user.id, 'marketing', false, 'website_form', 'Consentimento negado via banner LGPD'),
-        recordConsent(user.id, 'data_processing', false, 'website_form', 'Consentimento negado via banner LGPD'),
-        recordConsent(user.id, 'third_party_sharing', false, 'website_form', 'Consentimento negado via banner LGPD')
-      ];
-
-      await Promise.all(consentPromises);
+      // Registrar apenas evento de recusa
 
       // Log de auditoria
       await logEvent({

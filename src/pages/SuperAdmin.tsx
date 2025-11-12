@@ -12,14 +12,12 @@ import {
   Search, 
   MoreHorizontal,
   Crown,
-  Shield,
   Activity,
   DollarSign,
   TrendingUp,
   AlertTriangle,
   Gauge,
   Edit,
-  Eye,
   RefreshCw
 } from 'lucide-react'
 import {
@@ -34,21 +32,20 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+// select não utilizado
 import { useTenants } from '@/hooks/useTenants'
 import { useTenant } from '@/hooks/useTenant'
 import { useNavigate } from 'react-router-dom'
-import { useQuotas } from '@/hooks/useQuotas'
+// useQuotas não utilizado
 import { QuotaProgressGrid } from '@/components/ui/quota-progress'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { SuperAdminOnly } from '@/components/RoleGuard'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import { Resources, Actions } from '@/constants/permissions'
-import { useRoleContext } from '@/contexts/RoleContext'
+import { useRoleContext } from '@/contexts/useRoleContext'
 
 const mockStats = [
   {
@@ -120,7 +117,7 @@ export default function SuperAdmin() {
   const [createDomain, setCreateDomain] = useState('')
   const [creating, setCreating] = useState(false)
 
-  const { tenants, selectedTenantId, createTenant, loadMyTenants, loading, error } = useTenants()
+  const { tenants, selectedTenantId, createTenant, loading } = useTenants()
   const { switchTenant } = useTenant()
   const navigate = useNavigate()
   const { logAction } = useRoleContext()

@@ -7,7 +7,7 @@ import { isTestEnv } from '@/lib/env'
 import { useTenant } from '@/hooks/useTenant'
 import { useQuotas } from '@/hooks/useQuotas'
 import { useRateLimit } from '@/hooks/useRateLimit'
-import { useRoleContext } from '@/contexts/RoleContext'
+import { useRoleContext } from '@/contexts/useRoleContext'
 
 export function useEvolutionApi() {
   const { toast } = useToast()

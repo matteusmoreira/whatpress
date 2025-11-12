@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -9,7 +9,6 @@ import {
   Plus, 
   Search, 
   QrCode,
-  Wifi,
   WifiOff,
   MoreHorizontal,
   RefreshCw,
@@ -87,7 +86,7 @@ export default function WhatsAppConnections() {
   const messagesFeatureBlocked = isFeatureBlocked('messages')
 
   // Rate limit hooks for sending messages
-  const { canSendMessage: canSendRate, getStatus: getRateStatus, getNextAllowedTime, getRemainingQuota, isLoading: rateLimitLoading } = useRateLimit()
+  const { canSendMessage: canSendRate, getStatus: getRateStatus, isLoading: rateLimitLoading } = useRateLimit()
 
   // Sempre pegar a versão "ao vivo" da instância selecionada, acompanhando atualizações em tempo real vindas do Supabase/webhook
   const selectedLive = selectedInstance ? (instances.find(i => i.id === selectedInstance.id) ?? selectedInstance) : null
@@ -97,8 +96,8 @@ export default function WhatsAppConnections() {
 
   // Rate status for current selected instance
   const sendRateStatus = getRateStatus('instance', selectedLive?.id) || getRateStatus('global')
-  const canSendNow = canSendRate('instance', selectedLive?.id)
-  const remainingSendQuota = getRemainingQuota('instance', selectedLive?.id)
+  // const canSendNow = canSendRate('instance', selectedLive?.id)
+  // const remainingSendQuota = getRemainingQuota('instance', selectedLive?.id)
 
   // Filtrar instâncias baseado no termo de busca
   const filteredInstances = instances.filter(instance =>
@@ -140,7 +139,7 @@ export default function WhatsAppConnections() {
   const handleConnect = async (instance: WhatsAppInstance) => {
     try {
       setSelectedInstance(instance)
-      const result = await connect(instance.id)
+      await connect(instance.id)
       setIsQRDialogOpen(true)
     } catch (error) {
       // Erro já tratado no hook
@@ -168,7 +167,9 @@ export default function WhatsAppConnections() {
   const handleRefreshAll = async () => {
     try {
       await Promise.all(instances.map(i => checkConnectionStatus(i.id)))
-    } catch {}
+    } catch (err) {
+      console.warn('Falha ao atualizar status das instâncias', err)
+    }
   }
 
   // Eventos recentes por instância

@@ -60,6 +60,7 @@ export function BulkMessageManager({
 }: BulkMessageManagerProps) {
   const [activeTab, setActiveTab] = useState<'create' | 'manage'>('create')
   const [showPreview, setShowPreview] = useState(false)
+  const [customPreviewData, setCustomPreviewData] = useState<any | null>(null)
   const [showMediaManager, setShowMediaManager] = useState(false)
   const [selectedMedia, setSelectedMedia] = useState<any[]>([])
   
@@ -195,6 +196,20 @@ export function BulkMessageManager({
         {statusConfig.label}
       </Badge>
     )
+  }
+
+  const handleShowJobPreview = (job: any) => {
+    const content = job.templateId
+      ? templates.find(t => t.id === job.templateId)?.content || job.message || ''
+      : job.message || ''
+    const subject = job.templateId ? templates.find(t => t.id === job.templateId)?.subject : undefined
+    const firstRecipient = Array.isArray(job.recipients) && job.recipients.length > 0
+      ? (job.recipients[0].contact || 'Destinatário')
+      : 'Destinatário'
+    const media = Array.isArray(job.media) ? job.media.map((m: any) => ({ url: m.url, type: m.type, caption: m.caption })) : []
+    const data = { content, channel: job.channel, recipient: firstRecipient, subject, variables: {}, media }
+    setCustomPreviewData(data)
+    setShowPreview(true)
   }
 
   const previewData = {
@@ -497,7 +512,7 @@ export function BulkMessageManager({
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => {/* TODO: Implementar visualização detalhada */}}
+                          onClick={() => handleShowJobPreview(job)}
                         >
                           <Eye className="w-4 h-4" />
                         </Button>
@@ -538,13 +553,13 @@ export function BulkMessageManager({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setShowPreview(false)}
+                onClick={() => { setShowPreview(false); setCustomPreviewData(null) }}
               >
                 <XCircle className="w-4 h-4" />
               </Button>
             </div>
             <MessagePreview
-              data={previewData}
+              data={customPreviewData ?? previewData}
               showActions={false}
             />
           </div>

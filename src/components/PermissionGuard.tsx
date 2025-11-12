@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { useRoleContext, UserRole } from '@/contexts/RoleContext';
+import { useRoleContext } from '@/contexts/useRoleContext';
+import { UserRole } from '@/contexts/RoleContext';
 import { useToast } from '@/hooks/use-toast';
 import { Resources, Actions, isValidPermission } from '@/constants/permissions';
 

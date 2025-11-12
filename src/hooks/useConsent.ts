@@ -124,15 +124,42 @@ export const useConsent = () => {
     if (!user) return false;
 
     try {
+      let tenantId = currentTenant?.id || null
+      if (!tenantId) {
+        const { data: contactTenant } = await supabase
+          .from('contacts')
+          .select('tenant_id')
+          .eq('id', contactId)
+          .maybeSingle()
+        tenantId = (contactTenant as any)?.tenant_id || null
+      }
+
+      if (!tenantId) {
+        const { data: ut } = await supabase
+          .from('user_tenants')
+          .select('tenant_id')
+          .eq('user_id', user.id)
+          .limit(1)
+          .maybeSingle()
+        tenantId = (ut as any)?.tenant_id || null
+      }
+
+      if (!tenantId) {
+        console.warn('Consentimento não registrado: tenant_id ausente')
+        return false
+      }
+
+      const ip = await getClientIP().catch(() => 'unknown')
+
       const consentRecord: Omit<ConsentRecord, 'id' | 'created_at' | 'updated_at'> = {
         contact_id: contactId,
         user_id: user.id,
-        tenant_id: currentTenant?.id,
+        tenant_id: tenantId,
         consent_type: consentType,
         consent_given: consentGiven,
         consent_method: method,
-        consent_timestamp: new Date(),
-        ip_address: undefined,
+        consent_timestamp: new Date().toISOString() as any,
+        ip_address: ip !== 'unknown' ? (ip as any) : undefined,
         user_agent: navigator.userAgent,
         withdrawal_timestamp: null,
         withdrawal_method: null,

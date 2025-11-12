@@ -17,30 +17,17 @@ import {
   Shield, 
   CreditCard, 
   Palette, 
-  Globe, 
   Smartphone,
   Key,
   Database,
-  Zap,
   Crown,
-  Users,
-  Building,
-  Mail,
-  Phone,
-  MapPin,
-  Calendar,
-  Clock,
-  DollarSign,
-  BarChart3,
-  Lock,
   Eye,
   EyeOff,
   Save,
   RefreshCw,
   Download,
   Upload,
-  Trash2,
-  AlertTriangle
+  Trash2
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 

@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react'
-import { useRoleContext } from '@/contexts/RoleContext'
+import { useRoleContext } from '@/contexts/useRoleContext'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { ShieldX } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'

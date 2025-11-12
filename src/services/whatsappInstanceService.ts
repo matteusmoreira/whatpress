@@ -198,8 +198,8 @@ export class WhatsAppInstanceService {
         console.log('📡 Resultado da conexão:', JSON.stringify(result, null, 2))
 
         // Extrair QR code da resposta
-        let qrCode = result?.qrcode
-        let pairingCode = result?.pairingCode
+        const qrCode = result?.qrcode
+        const pairingCode = result?.pairingCode
         
         console.log(`🎯 QR Code extraído: ${qrCode ? 'Sim' : 'Não'}`)
         console.log(`🔑 Pairing Code extraído: ${pairingCode ? 'Sim' : 'Não'}`)

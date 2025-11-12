@@ -95,14 +95,14 @@ export class PerformanceMonitor {
   finishSpan(name: string) {
     const span = this.spans.get(name)
     if (span) {
-      ;(span as any).end?.()
+      (span as any).end?.()
       this.spans.delete(name)
     }
   }
 
   finishTransaction() {
     if (this.rootSpan) {
-      ;(this.rootSpan as any).end?.()
+      (this.rootSpan as any).end?.()
       this.rootSpan = null
       this.spans.clear()
     }
@@ -258,11 +258,8 @@ export async function monitorAPIRequest<T>(
 // 1) monitorDatabaseQuery('SELECT ...', async () => {...}, context)
 // 2) monitorDatabaseQuery(async () => {...}, { query: 'SELECT ...', operation: 'select', ... })
 export const monitorDatabaseQuery = async <T>(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   queryOrFn: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   fnOrContext?: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context?: any
 ): Promise<T> => {
   const transaction = getActiveTransaction()
@@ -365,10 +362,10 @@ export const monitorQueueJob = async <T>(
 
   try {
     const result = await fn()
-    ;(span as any).setStatus?.('ok')
+    (span as any).setStatus?.('ok')
     return result
   } catch (error) {
-    ;(span as any).setStatus?.('internal_error')
+    (span as any).setStatus?.('internal_error')
     Sentry.captureException(error, {
       tags: { 
         operation: 'queue_job',
@@ -378,7 +375,7 @@ export const monitorQueueJob = async <T>(
     })
     throw error
   } finally {
-    ;(span as any).end?.()
+    (span as any).end?.()
   }
 }
 

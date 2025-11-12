@@ -58,7 +58,7 @@ export class StripeService {
 
   async createRefund(paymentIntentId: string, amount?: number): Promise<Payment> {
     try {
-      const refund = await this.stripe.refunds.create({
+      await this.stripe.refunds.create({
         payment_intent: paymentIntentId,
         amount: amount ? Math.round(amount * 100) : undefined,
       });

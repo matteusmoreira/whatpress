@@ -16,7 +16,6 @@ import {
   ArrowDown,
   MessageSquare,
   Clock,
-  Users,
   Target,
   GitBranch,
   Zap,

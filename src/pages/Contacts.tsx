@@ -45,6 +45,8 @@ import { useQuotas } from '@/hooks/useQuotas'
 import { useNavigate } from 'react-router-dom'
 import { QuotaAlertsManager } from '@/components/QuotaAlertsManager'
 import ContactImportModal from '@/components/ContactImportModal'
+import ContactsKanban from '@/components/ContactsKanban'
+import ContactCreateModal from '@/components/ContactCreateModal'
 import { useTenant } from '@/hooks/useTenant'
 import { GatingBanner } from '@/components/GatingBanner'
 import { formatUsageTooltip } from '@/lib/utils'
@@ -86,6 +88,8 @@ export default function Contacts() {
   const messagesFeatureBlocked = isFeatureBlocked('messages')
   const navigate = useNavigate()
   const [importOpen, setImportOpen] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [tab, setTab] = useState('lista')
 
   // Carregar dados iniciais
   useEffect(() => {
@@ -104,7 +108,7 @@ export default function Contacts() {
         .from('contacts')
         .select('*')
         .eq('user_id', user?.id)
-        .order('last_message_at', { ascending: false })
+        .order('created_at', { ascending: false })
 
       if (contactsError) throw contactsError
 
@@ -260,6 +264,10 @@ export default function Contacts() {
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Atualizar
           </Button>
+          <Button variant="default" className="gap-2" onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Adicionar Contato
+          </Button>
           <Button
             variant="outline"
             className="gap-2"
@@ -335,7 +343,12 @@ export default function Contacts() {
         </Card>
       </div>
 
-      {/* Filters and Search */}
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="lista">Lista</TabsTrigger>
+          <TabsTrigger value="kanban">Kanban</TabsTrigger>
+        </TabsList>
+        <TabsContent value="lista">
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -455,6 +468,11 @@ export default function Contacts() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
+        <TabsContent value="kanban">
+          <ContactsKanban contacts={contacts} onChanged={loadContacts} />
+        </TabsContent>
+      </Tabs>
       {/* Import Modal */}
       {user && (
         <ContactImportModal
@@ -463,6 +481,15 @@ export default function Contacts() {
           tenantId={currentTenant?.id}
           userId={user.id}
           onImported={loadContacts}
+        />
+      )}
+      {user && (
+        <ContactCreateModal
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          tenantId={currentTenant?.id}
+          userId={user.id}
+          onCreated={loadContacts}
         />
       )}
     </div>

@@ -1,4 +1,4 @@
-import React from 'react'
+//
 
 // Página de teste para acionar o ErrorBoundary em desenvolvimento
 // Acessar /dev/error para validar captura e logging de erros de UI

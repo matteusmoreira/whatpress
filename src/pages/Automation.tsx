@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -6,41 +6,28 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Progress } from '@/components/ui/progress'
+ 
 import { Switch } from '@/components/ui/switch'
 import { 
   Zap, 
   Plus, 
   Search, 
-  Filter,
   Play,
   Pause,
-  Square,
   MoreHorizontal,
-  Calendar,
-  Users,
   MessageSquare,
   Clock,
   CheckCircle,
-  AlertCircle,
-  Eye,
   Edit,
   Copy,
   Trash2,
-  Settings,
-  ArrowRight,
-  ArrowDown,
   Timer,
   Target,
-  Workflow,
   Bot,
   Send,
-  Reply,
   UserPlus,
   Tag,
   GitBranch,
-  Repeat,
   Loader2,
   Save,
   X,

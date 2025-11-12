@@ -76,7 +76,7 @@ export function GatingBanner({
     try {
       const target = t instanceof Date ? (t as Date).getTime() : (t as number)
       const now = Date.now()
-      let diff = Math.max(0, target - now)
+      const diff = Math.max(0, target - now)
       const seconds = Math.floor(diff / 1000)
       if (seconds < 60) return `${seconds}s`
       const minutes = Math.floor(seconds / 60)

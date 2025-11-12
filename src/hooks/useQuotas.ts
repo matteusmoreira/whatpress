@@ -136,14 +136,15 @@ export const useQuotas = () => {
     }
 
     try {
-      let query = supabase
+      const query = supabase
         .from('quota_alerts')
         .select('*')
         .eq('tenant_id', currentTenant.id)
         .order('created_at', { ascending: false })
         .limit(10)
 
-      let { data, error: alertsError } = await query
+      const { data: initialData, error: alertsError } = await query
+      let data = initialData
       if (alertsError) {
         const msg = String(alertsError.message || '')
         if (msg.includes('acknowledged') || alertsError.code === '42703') {

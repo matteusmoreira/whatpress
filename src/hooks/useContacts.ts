@@ -214,7 +214,6 @@ export function useContacts(): UseContactsResult {
 
   useEffect(() => {
     fetchContacts()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, currentTenant?.id])
 
   return {

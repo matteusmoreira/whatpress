@@ -181,7 +181,7 @@ function normalizeEventName(input: any): 'messages.upsert' | 'connection.update'
   const raw = String(input || '').trim().toLowerCase()
   if (!raw) return 'unknown'
   // Replace separators and normalize qrcode -> qr
-  let e = raw.replace(/[-_]/g, '.').replace(/qrcode/g, 'qr')
+  const e = raw.replace(/[-_]/g, '.').replace(/qrcode/g, 'qr')
 
   // Common variants mapping
   if (e === 'messages.upsert' || e === 'message.upsert' || e === 'messages.updates' || e === 'messages.insert') return 'messages.upsert'

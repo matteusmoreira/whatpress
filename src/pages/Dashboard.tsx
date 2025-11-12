@@ -30,7 +30,7 @@ import { useQuotas } from '@/hooks/useQuotas'
 import { CampaignProgress } from '@/components/CampaignProgress'
 import { InstanceHealthMonitor } from '@/components/InstanceHealthMonitor'
 import { QuotaProgressGrid, QuotaProgressCompact } from '@/components/ui/quota-progress'
-import { useRoleContext } from '@/contexts/RoleContext'
+import { useRoleContext } from '@/contexts/useRoleContext'
 // import { useTenant } from '@/hooks/useTenant' // Removido: troca de tenant agora é global via Header
 import { RoleGuard } from '@/components/ui/role-guard'
 import { Shield, User, Crown, Settings } from 'lucide-react'

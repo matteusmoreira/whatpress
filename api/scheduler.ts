@@ -55,7 +55,9 @@ async function getContactPhone(contact_id: string, tenant_id: string): Promise<s
     if (Array.isArray(data) && data[0]?.phone_number) {
       return data[0].phone_number as string;
     }
-  } catch {}
+  } catch (err) {
+    console.warn('Falha ao buscar telefone do contato', err)
+  }
   return contact_id; // fallback
 }
 

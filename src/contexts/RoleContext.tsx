@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import React, { createContext, useEffect, useState, ReactNode } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTenant } from '@/hooks/useTenant';
 import { supabase } from '@/lib/supabase';
@@ -47,7 +47,7 @@ export interface RoleContextType {
   logAction: (action: string, resource?: string, details?: any) => Promise<void>;
 }
 
-const RoleContext = createContext<RoleContextType | undefined>(undefined);
+export const RoleContext = createContext<RoleContextType | undefined>(undefined);
 
 interface RoleProviderProps {
   children: ReactNode;
@@ -355,10 +355,4 @@ export function RoleProvider({ children }: RoleProviderProps) {
   );
 }
 
-export function useRoleContext() {
-  const context = useContext(RoleContext);
-  if (context === undefined) {
-    throw new Error('useRoleContext deve ser usado dentro de um RoleProvider');
-  }
-  return context;
-}
+// useRoleContext movido para '@/contexts/useRoleContext' para evitar incompatibilidades com React Refresh

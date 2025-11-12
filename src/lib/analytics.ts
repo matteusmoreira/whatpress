@@ -620,7 +620,7 @@ export const setupAutoTracking = () => {
   })
 
   // Track tempo na página
-  let pageStartTime = Date.now()
+  const pageStartTime = Date.now()
   
   window.addEventListener('beforeunload', () => {
     const timeOnPage = Date.now() - pageStartTime

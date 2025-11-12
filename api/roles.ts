@@ -96,7 +96,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const userIds = (assoc || []).map((r: any) => r.user_id);
-        let profilesById: Record<string, any> = {};
+        const profilesById: Record<string, any> = {};
         if (userIds.length > 0) {
           const { data: profiles, error: profilesError } = await supabase
             .from('users')

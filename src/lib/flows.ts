@@ -879,7 +879,7 @@ export async function exportFlow(flowId: string, tenantId: string): Promise<any 
   if (!flow) return null
   
   // Remover campos internos
-  const { id, tenantId: tenant, createdAt, updatedAt, ...exportData } = flow
+  const { id: _id, tenantId: _tenant, createdAt: _createdAt, updatedAt: _updatedAt, ...exportData } = flow
   
   return exportData
 }

@@ -1,4 +1,3 @@
-import { createClient } from '@supabase/supabase-js'
 import { env } from './env'
 
 export interface EncryptionConfig {
@@ -198,6 +197,17 @@ class EncryptionService {
     } catch (error) {
       console.error('Erro ao rotacionar chave:', error)
       throw new Error('Falha ao rotacionar chave')
+    }
+  }
+
+  getKeyInfo(userId: string, tenantId: string): { created_at: Date | null; expires_at?: Date | null; is_active: boolean } | null {
+    const keyId = this.generateKeyId(userId, tenantId)
+    const key = this.keys.get(keyId)
+    if (!key) return null
+    return {
+      created_at: key.created_at || null,
+      expires_at: key.expires_at || null,
+      is_active: key.is_active,
     }
   }
 

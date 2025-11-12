@@ -35,6 +35,7 @@ export interface UseEncryptionResult {
   generateSecureId: () => string;
   generateSecureToken: (length?: number) => Promise<string>;
   rotateKey: () => Promise<void>;
+  getKeyStatus: () => Promise<{ createdAt: Date | null; expiresAt: Date | null; isActive: boolean } | null>;
 }
 
 export const useEncryption = (): UseEncryptionResult => {
@@ -441,6 +442,24 @@ export const useEncryption = (): UseEncryptionResult => {
     }
   }, [isEncryptionAvailable, user]);
 
+  const getKeyStatus = useCallback(async (): Promise<{ createdAt: Date | null; expiresAt: Date | null; isActive: boolean } | null> => {
+    try {
+      if (!user?.id || !user?.user_metadata?.tenant_id) {
+        return null
+      }
+      const info = encryptionService.getKeyInfo(user.id, user.user_metadata.tenant_id)
+      if (!info) return null
+      return {
+        createdAt: info.created_at,
+        expiresAt: info.expires_at ?? null,
+        isActive: info.is_active,
+      }
+    } catch (error) {
+      console.error('Erro ao obter status da chave:', error)
+      return null
+    }
+  }, [user])
+
   return {
     isEncryptionAvailable,
     isLoading,
@@ -463,7 +482,8 @@ export const useEncryption = (): UseEncryptionResult => {
     exportUserData,
     deleteUserData,
     createAuditLog,
-    rotateKey
+    rotateKey,
+    getKeyStatus
   };
 };
 

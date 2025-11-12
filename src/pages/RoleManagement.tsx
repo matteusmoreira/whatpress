@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Resources, Actions } from '@/constants/permissions';
-import { useRoleContext } from '@/contexts/RoleContext';
+import { useRoleContext } from '@/contexts/useRoleContext';
 
 interface TenantUser {
   id: string;

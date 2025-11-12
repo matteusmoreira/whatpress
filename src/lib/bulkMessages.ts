@@ -593,7 +593,7 @@ async function sendIndividualMessage(
       }
 
       let messageContent = job.content || ''
-      let messageVariables = { ...job.variables, ...recipient.variables }
+      const messageVariables = { ...job.variables, ...recipient.variables }
 
       // Se tiver template, processar
       if (job.template_id) {
@@ -678,9 +678,9 @@ async function sendIndividualMessage(
  * Envia mensagem WhatsApp (mock)
  */
 async function sendWhatsAppMessage(
-  recipient: BulkMessageRecipient,
-  content: string,
-  provider: string
+  _recipient: BulkMessageRecipient,
+  _content: string,
+  _provider: string
 ): Promise<string> {
   // Simular envio WhatsApp
   await new Promise(resolve => setTimeout(resolve, 500))
@@ -697,9 +697,9 @@ async function sendWhatsAppMessage(
  * Envia email (mock)
  */
 async function sendEmailMessage(
-  recipient: BulkMessageRecipient,
-  content: string,
-  provider: string
+  _recipient: BulkMessageRecipient,
+  _content: string,
+  _provider: string
 ): Promise<string> {
   // Simular envio email
   await new Promise(resolve => setTimeout(resolve, 800))
@@ -716,9 +716,9 @@ async function sendEmailMessage(
  * Envia SMS (mock)
  */
 async function sendSMSMessage(
-  recipient: BulkMessageRecipient,
-  content: string,
-  provider: string
+  _recipient: BulkMessageRecipient,
+  _content: string,
+  _provider: string
 ): Promise<string> {
   // Simular envio SMS
   await new Promise(resolve => setTimeout(resolve, 300))

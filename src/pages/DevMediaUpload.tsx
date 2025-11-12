@@ -9,8 +9,8 @@ export default function DevMediaUploadPage() {
     const originalGetUser = supabase.auth.getUser
     const originalFrom = supabase.storage.from
 
-    // Mock de auth para E2E
-    ;(supabase.auth as any).getUser = async () => ({ data: { user: { id: 'e2e-user' } } })
+    // Mock de auth para E2E;
+    (supabase.auth as any).getUser = async () => ({ data: { user: { id: 'e2e-user' } } })
 
     // Mock de Storage para simular upload e URL pública
     ;(supabase.storage as any).from = (bucket: string) => {
@@ -30,8 +30,8 @@ export default function DevMediaUploadPage() {
     }
 
     return () => {
-      ;(supabase.auth as any).getUser = originalGetUser
-      ;(supabase.storage as any).from = originalFrom
+      (supabase.auth as any).getUser = originalGetUser
+      (supabase.storage as any).from = originalFrom
     }
   }, [])
 

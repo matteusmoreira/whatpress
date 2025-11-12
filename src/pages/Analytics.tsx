@@ -3,37 +3,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Progress } from '@/components/ui/progress'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { 
-  BarChart3, 
   TrendingUp, 
   TrendingDown,
   Users,
-  MessageSquare,
   Send,
   CheckCircle,
-  Clock,
-  Eye,
   Reply,
-  Calendar,
   Download,
-  Filter,
   RefreshCw,
-  Target,
-  Zap,
-  Globe,
-  Smartphone,
-  Mail,
   Activity,
-  XCircle,
-  Loader2,
-  FileText,
-  PieChart,
-  BarChart,
-  LineChart as LineChartIcon,
-  Settings
+  Loader2
 } from 'lucide-react'
 import {
   Select,

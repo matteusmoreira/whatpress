@@ -11,7 +11,6 @@ export const isTestEnv: boolean = (() => {
     if (typeof import.meta !== 'undefined' && (import.meta as any).env?.MODE === 'test') return true
   } catch {}
   // Fallback for Node-based contexts
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const proc: any = typeof process !== 'undefined' ? process : undefined
   if (proc && proc.env) {
     if (proc.env.VITEST) return true
@@ -25,7 +24,6 @@ export const isDevEnv: boolean = (() => {
     // @ts-ignore
     if (typeof import.meta !== 'undefined' && (import.meta as any).env?.MODE === 'development') return true
   } catch {}
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const proc: any = typeof process !== 'undefined' ? process : undefined
   return !!(proc && proc.env && proc.env.NODE_ENV === 'development')
 })()
@@ -35,14 +33,12 @@ export const isProdEnv: boolean = (() => {
     // @ts-ignore
     if (typeof import.meta !== 'undefined' && (import.meta as any).env?.MODE === 'production') return true
   } catch {}
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const proc: any = typeof process !== 'undefined' ? process : undefined
   return !!(proc && proc.env && proc.env.NODE_ENV === 'production')
 })()
 
 // Unified env accessor with safe fallbacks for tests and Node
 // Provides commonly used VITE_* variables to avoid runtime TypeErrors
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const metaEnv: any = (() => {
   try {
     // @ts-ignore
@@ -52,7 +48,6 @@ const metaEnv: any = (() => {
   }
 })()
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const nodeEnv: any = (typeof process !== 'undefined' && (process as any).env) ? (process as any).env : {}
 
 const getVar = (key: string, def?: string): string => {

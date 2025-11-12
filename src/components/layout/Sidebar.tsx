@@ -12,7 +12,6 @@ import {
   HelpCircle,
   ChevronLeft,
   ChevronRight,
-  Database,
   Shield,
   Crown,
   Calendar,
@@ -20,7 +19,7 @@ import {
   TrendingUp,
   Lock
 } from 'lucide-react'
-import { useRoleContext } from '@/contexts/RoleContext'
+import { useRoleContext } from '@/contexts/useRoleContext'
 
 interface SidebarProps {
   className?: string
@@ -29,7 +28,7 @@ interface SidebarProps {
 export function Sidebar({ className }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false)
   const location = useLocation()
-  const { currentRole, isSuperAdmin, isAdmin } = useRoleContext()
+  const { isSuperAdmin, isAdmin } = useRoleContext()
   // currentRole is a string ("SUPERADMIN" | "ADMIN" | "USER" | "NONE")
   // use the provided booleans from useRoles to avoid incorrect property access
 

@@ -1,5 +1,5 @@
 import React, { ReactNode, useEffect, useState } from 'react';
-import { useRoleContext } from '@/contexts/RoleContext';
+import { useRoleContext } from '@/contexts/useRoleContext';
  import { Alert, AlertDescription } from '@/components/ui/alert';
  import { Button } from '@/components/ui/button';
  import { Shield, AlertTriangle, Lock } from 'lucide-react';

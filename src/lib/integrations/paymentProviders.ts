@@ -220,7 +220,7 @@ export class StripeProvider extends BasePaymentProvider {
 
   async refundPayment(paymentId: string, amount?: number): Promise<Payment> {
     try {
-      const refund = await this.stripe.refunds.create({
+      await this.stripe.refunds.create({
         payment_intent: paymentId,
         amount
       })

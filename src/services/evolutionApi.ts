@@ -173,7 +173,7 @@ export class EvolutionApiService {
           console.log(`📱 Dados QR (tentativa ${attempts}):`, JSON.stringify(qrData, null, 2))
           
           // Extrair QR code de diferentes formatos possíveis
-          let qrcode = this.extractQRCode(qrData)
+          const qrcode = this.extractQRCode(qrData)
           
           if (qrcode) {
             console.log(`✅ QR code obtido na tentativa ${attempts}!`)

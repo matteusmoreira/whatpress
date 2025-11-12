@@ -489,7 +489,7 @@ export const useMessages = () => {
 
       // Criptografar mensagem se disponível
       let encryptedContent = message
-      let encryptedMedia = mediaFile
+      const encryptedMedia = mediaFile
       let isEncrypted = false
 
       if (encryptionEnabled) {
