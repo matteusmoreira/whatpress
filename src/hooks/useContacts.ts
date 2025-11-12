@@ -213,7 +213,7 @@ export function useContacts(): UseContactsResult {
   }, [cachedContacts, user])
 
   useEffect(() => {
-    fetchContacts()
+    mutateContacts()
   }, [user?.id, currentTenant?.id])
 
   return {
@@ -223,8 +223,5 @@ export function useContacts(): UseContactsResult {
     refresh: () => mutateContacts(),
     checkContactConsent,
     recordContactConsent,
-    // Cache e monitoring
-    cachedContacts: cachedContacts,
-    isLoadingContacts: !cachedContacts && !!user
   }
 }

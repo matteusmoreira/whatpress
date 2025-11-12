@@ -112,7 +112,7 @@ export function useEvolutionApi() {
             await new Promise(resolve => setTimeout(resolve, 2000))
             const targetInstance = instances.find(i => i.id === instanceId)
             if (targetInstance) {
-              await fetchContactsAndSave(targetInstance)
+              await fetchContactsAndSave?.(targetInstance)
             }
           }
         } catch (syncError: unknown) {
@@ -125,7 +125,7 @@ export function useEvolutionApi() {
       toast({ title: 'Erro ao verificar status', description: error?.message, variant: 'destructive' })
       return 'error' as WhatsAppInstance['status']
     }
-  }, [toast, currentTenant?.id, instances, contacts, fetchContactsAndSave])
+  }, [toast, currentTenant?.id, instances, contacts])
 
   const deleteInstance = useCallback(async (instanceId: string) => {
     try {

@@ -54,7 +54,7 @@ export const useEncryption = (): UseEncryptionResult => {
       setError(null);
 
       // Verificar se a criptografia está configurada
-      const masterKey = process.env.VITE_MASTER_ENCRYPTION_KEY;
+      const masterKey = (import.meta as any)?.env?.VITE_MASTER_ENCRYPTION_KEY;
       
       if (!masterKey) {
         setIsEncryptionAvailable(false);

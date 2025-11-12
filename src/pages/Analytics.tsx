@@ -64,7 +64,8 @@ export default function Analytics() {
     exportAnalytics,
     getRealTimeMetrics,
     comparePeriods,
-    refreshMetrics
+    refreshMetrics,
+    isLoading
   } = useAnalytics()
 
   const [selectedMetric, setSelectedMetric] = useState('messages')
@@ -83,6 +84,7 @@ export default function Analytics() {
   // Fetch real-time data periodically
   useEffect(() => {
     const fetchRealTime = async () => {
+      if (!getRealTimeMetrics) return
       const data = await getRealTimeMetrics()
       setRealTimeData(data)
     }
@@ -104,17 +106,20 @@ export default function Analytics() {
   }
 
   const handleExport = async () => {
-    await exportAnalytics(exportOptions)
+    await exportAnalytics?.(exportOptions)
     setExportDialogOpen(false)
   }
 
   const handlePeriodChange = (period: string) => {
-    updateFilters({ period: period as any })
+    updateFilters?.({ period: period as any })
   }
 
   const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8']
 
-  if (loading && !metrics) {
+  const loadingState = Boolean((loading as any) ?? isLoading)
+  const periodValue = filters?.period ?? '30d'
+
+  if (loadingState && !metrics) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -133,7 +138,7 @@ export default function Analytics() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Select value={filters.period} onValueChange={handlePeriodChange}>
+          <Select value={periodValue} onValueChange={handlePeriodChange}>
             <SelectTrigger className="w-[140px]">
               <SelectValue />
             </SelectTrigger>
@@ -148,8 +153,8 @@ export default function Analytics() {
             <Download className="mr-2 h-4 w-4" />
             Exportar
           </Button>
-          <Button variant="outline" onClick={refreshMetrics} disabled={loading}>
-            {loading ? (
+          <Button variant="outline" onClick={() => refreshMetrics?.()} disabled={loadingState}>
+            {loadingState ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
               <RefreshCw className="mr-2 h-4 w-4" />
@@ -258,7 +263,7 @@ export default function Analytics() {
             <CardContent>
               <div className="h-[400px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={messageVolumeData}>
+                  <AreaChart data={messageVolumeData || []}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis 
                       dataKey="date" 
@@ -302,7 +307,7 @@ export default function Analytics() {
             <CardContent>
               <div className="h-[400px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <RechartsBarChart data={campaignPerformanceData}>
+                  <RechartsBarChart data={campaignPerformanceData || []}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="name" />
                     <YAxis />
@@ -391,7 +396,7 @@ export default function Analytics() {
             <CardContent>
               <div className="h-[400px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={responseTimeData}>
+                  <LineChart data={responseTimeData || []}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis 
                       dataKey="date" 
