@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import { monitorFunction } from '@/lib/monitoring'
-import crypto from 'crypto'
+import CryptoJS from 'crypto-js'
 
 /**
  * Interface para webhooks
@@ -67,7 +67,7 @@ export class AdvancedWebhookService {
     return monitorFunction('webhook.create', async () => {
       const webhook: Webhook = {
         ...webhookData,
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         created_at: new Date(),
         updated_at: new Date()
       }
@@ -176,7 +176,7 @@ export class AdvancedWebhookService {
     return monitorFunction('webhook.emit', async () => {
       const webhookEvent: WebhookEvent = {
         ...event,
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         created_at: new Date()
       }
 
@@ -215,7 +215,7 @@ export class AdvancedWebhookService {
    */
   private async createAttempt(webhook: Webhook, event: WebhookEvent): Promise<WebhookAttempt> {
     const attempt: WebhookAttempt = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       webhook_id: webhook.id,
       event_id: event.id,
       event_type: event.type,
@@ -272,10 +272,7 @@ export class AdvancedWebhookService {
       }
 
       if (webhook.secret) {
-        const signature = crypto
-          .createHmac('sha256', webhook.secret)
-          .update(JSON.stringify(payload))
-          .digest('hex')
+        const signature = CryptoJS.HmacSHA256(JSON.stringify(payload), webhook.secret).toString()
         headers['X-Webhook-Signature'] = `sha256=${signature}`
       }
 
@@ -367,7 +364,7 @@ export class AdvancedWebhookService {
     const timeoutId = setTimeout(async () => {
       // Criar nova tentativa
       const newAttempt: WebhookAttempt = {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         webhook_id: attempt.webhook_id,
         event_id: attempt.event_id,
         event_type: attempt.event_type,
@@ -458,7 +455,7 @@ export class AdvancedWebhookService {
 
       // Criar nova tentativa
       const newAttempt: WebhookAttempt = {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         webhook_id: attempt.webhook_id,
         event_id: attempt.event_id,
         event_type: attempt.event_type,
@@ -515,4 +512,11 @@ export async function emitAnalyticsEvent(event: string, tenantId: string, data: 
     tenant_id: tenantId,
     data
   })
+}
+
+function generateUUID(): string {
+  const g = (globalThis as any).crypto
+  if (g && typeof g.randomUUID === 'function') return g.randomUUID()
+  const rnd = (n: number) => (Math.random().toString(16).slice(2) + '00000000000000000').slice(0, n)
+  return `${rnd(8)}-${rnd(4)}-${rnd(4)}-${rnd(4)}-${rnd(12)}`
 }

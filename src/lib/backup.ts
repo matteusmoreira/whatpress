@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { getEncryptionService } from './encryption';
+import CryptoJS from 'crypto-js';
 
 export interface BackupOptions {
   tenantId: string;
@@ -253,10 +254,7 @@ class BackupService {
   }
 
   private calculateChecksum(data: any): string {
-    const crypto = require('crypto');
-    const hash = crypto.createHash('sha256');
-    hash.update(JSON.stringify(data));
-    return hash.digest('hex');
+    return CryptoJS.SHA256(JSON.stringify(data)).toString();
   }
 
   private async logBackupActivity(tenantId: string, action: string, details: any): Promise<void> {
