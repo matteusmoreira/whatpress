@@ -10,7 +10,6 @@ import { useAuth } from './useAuth'
 import { useTenant } from './useTenant'
 import { useCache } from './useCache'
 import { monitorFunction } from '@/lib/monitoring'
-import { addQueueJob } from '@/lib/queue'
 import { 
   processMediaUpload, 
   listMedia, 
@@ -147,21 +146,7 @@ export function useMedia(options: UseMediaOptions = {}): UseMediaReturn {
           setUploadProgress(100)
 
           if (result.success && result.media) {
-            // Atualizar cache
             await mutateMedia()
-            
-            // Adicionar trabalho de processamento se necessário
-            if (result.jobId) {
-              try {
-                await addQueueJob('media', 'process', {
-                  mediaId: result.media.id,
-                  jobId: result.jobId
-                })
-              } catch (error) {
-                console.warn('Não foi possível adicionar trabalho de processamento:', error)
-                // Em ambiente de desenvolvimento, o processamento pode ser feito síncrono
-              }
-            }
           }
 
           // Resetar progresso após um tempo
