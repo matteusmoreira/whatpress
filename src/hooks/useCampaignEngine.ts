@@ -544,22 +544,25 @@ export const useCampaignEngine = (): UseCampaignEngineReturn => {
 
       setIsLoading(true);
 
-      const success = await updateCampaign(campaignId, { 
-        status: 'running',
-        started_at: new Date().toISOString()
-      });
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) return false;
 
-      if (success) {
-        // Trigger campaign processing
-        await processQueue(campaignId);
-        
-        // Atualizar quota de campanhas ativas
-        await updateQuotaUsage('campaigns', 1);
-        
-        toast.success('Campanha iniciada com sucesso!');
+      const res = await fetch(`/api/campaigns/${campaignId}/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.error || 'Falha ao iniciar campanha');
       }
 
-      return success;
+      await updateQuotaUsage('campaigns', 1);
+      toast.success('Campanha iniciada com sucesso!');
+      return true;
     } catch (error) {
       console.error('Erro ao iniciar campanha:', error);
       toast.error('Erro ao iniciar campanha');
@@ -567,31 +570,73 @@ export const useCampaignEngine = (): UseCampaignEngineReturn => {
     } finally {
       setIsLoading(false);
     }
-  }, [campaigns, checkQuotasBeforeStart, updateCampaign, updateQuotaUsage, processQueue]);
+  }, [campaigns, checkQuotasBeforeStart, updateQuotaUsage]);
 
   // Pause campaign
   const pauseCampaign = useCallback(async (id: string): Promise<boolean> => {
-    return updateCampaign(id, { status: 'paused' });
-  }, [updateCampaign]);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return false;
+    try {
+      const res = await fetch(`/api/campaigns/${id}/pause`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || 'Falha ao pausar campanha');
+      return true;
+    } catch (e) {
+      console.error('Erro ao pausar campanha:', e);
+      return false;
+    }
+  }, []);
 
   // Resume campaign
   const resumeCampaign = useCallback(async (id: string): Promise<boolean> => {
-    const success = await updateCampaign(id, { status: 'running' });
-    
-    if (success) {
-      await processQueue(id);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return false;
+    try {
+      const res = await fetch(`/api/campaigns/${id}/resume`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || 'Falha ao retomar campanha');
+      return true;
+    } catch (e) {
+      console.error('Erro ao retomar campanha:', e);
+      return false;
     }
-    
-    return success;
-  }, [updateCampaign, processQueue]);
+  }, []);
 
   // Stop campaign
   const stopCampaign = useCallback(async (id: string): Promise<boolean> => {
-    return updateCampaign(id, { 
-      status: 'completed',
-      completed_at: new Date().toISOString()
-    });
-  }, [updateCampaign]);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return false;
+    try {
+      const res = await fetch(`/api/campaigns/${id}/stop`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || 'Falha ao finalizar campanha');
+      return true;
+    } catch (e) {
+      console.error('Erro ao finalizar campanha:', e);
+      return false;
+    }
+  }, []);
 
   // Add messages to queue
   const addToQueue = useCallback(async (campaignId: string, messages: Partial<MessageQueueItem>[]): Promise<boolean> => {

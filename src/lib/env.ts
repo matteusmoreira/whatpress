@@ -73,6 +73,9 @@ export const env = {
   VITE_SENTRY_DSN: getVar('VITE_SENTRY_DSN', ''),
   VITE_ENVIRONMENT: getVar('VITE_ENVIRONMENT', isTestEnv ? 'test' : (isDevEnv ? 'development' : 'production')),
 
+  // Encryption
+  VITE_MASTER_ENCRYPTION_KEY: getVar('VITE_MASTER_ENCRYPTION_KEY', ''),
+
   // API base
   VITE_API_URL: getVar('VITE_API_URL', ''),
 

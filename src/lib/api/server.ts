@@ -18,6 +18,7 @@ import { crmRouter, webhooksRouter } from './integrations'
 import { automationRouter } from './automation'
 import { paymentsRouter } from './payments'
 import { apiAuth } from './auth'
+import { initializeWorkers } from '@/lib/queue'
 
 const app = express()
 const server = createServer(app)
@@ -228,6 +229,8 @@ export function startAPIServer() {
     console.log(`🚀 API Server running on port ${PORT}`)
     console.log(`📚 API Docs available at http://localhost:${PORT}/api/docs`)
   })
+
+  initializeWorkers()
 
   return { app, server, io }
 }

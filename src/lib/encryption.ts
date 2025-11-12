@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { env } from './env'
 
 export interface EncryptionConfig {
   algorithm: string
@@ -46,7 +47,7 @@ class EncryptionService {
 
   private async initializeMasterKey(): Promise<void> {
     try {
-      const masterKeyData = process.env.VITE_MASTER_ENCRYPTION_KEY
+      const masterKeyData = env.VITE_MASTER_ENCRYPTION_KEY
       if (!masterKeyData) {
         console.warn('Chave mestra de criptografia não configurada')
         return

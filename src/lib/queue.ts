@@ -1,20 +1,55 @@
-import { Queue, Worker, Job } from 'bullmq'
 import { redisQueue } from './redis'
 import { monitorQueueJob } from './monitoring'
 import { executeWithRetryAndCircuitBreaker, defaultCircuitBreakerConfigs } from './circuitBreaker'
 
-// Configuração das filas
-const queueConfig = {
-  connection: redisQueue,
-  defaultJobOptions: {
-    removeOnComplete: { age: 3600, count: 100 }, // Manter jobs completos por 1 hora ou 100 jobs
-    removeOnFail: { age: 24 * 3600, count: 500 }, // Manter jobs falhos por 24 horas ou 500 jobs
-    attempts: 3,
-    backoff: {
-      type: 'exponential',
-      delay: 2000,
+const isBrowser = typeof window !== 'undefined'
+let QueueRef: any
+let WorkerRef: any
+type Job = any
+async function ensureBullMQ() {
+  if (!QueueRef || !WorkerRef) {
+    const mod: any = await import('bullmq')
+    QueueRef = mod.Queue
+    WorkerRef = mod.Worker
+  }
+}
+
+let messageQueue: any
+let mediaQueue: any
+let campaignQueue: any
+let webhookQueue: any
+let cleanupQueue: any
+let backupQueue: any
+let bulkQueue: any
+let templateQueue: any
+let flowExecutionQueue: any
+
+async function ensureQueues() {
+  if (isBrowser) return
+  await ensureBullMQ()
+  const queueConfig = {
+    connection: redisQueue,
+    defaultJobOptions: {
+      removeOnComplete: { age: 3600, count: 100 },
+      removeOnFail: { age: 24 * 3600, count: 500 },
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 2000,
+      },
     },
-  },
+  }
+  if (!messageQueue) {
+    messageQueue = new QueueRef('messages', queueConfig)
+    mediaQueue = new QueueRef('media', queueConfig)
+    campaignQueue = new QueueRef('campaigns', queueConfig)
+    webhookQueue = new QueueRef('webhooks', queueConfig)
+    cleanupQueue = new QueueRef('cleanup', queueConfig)
+    backupQueue = new QueueRef('backup', queueConfig)
+    bulkQueue = new QueueRef('bulk', queueConfig)
+    templateQueue = new QueueRef('template', queueConfig)
+    flowExecutionQueue = new QueueRef('flow_execution', queueConfig)
+  }
 }
 
 // Tipos de jobs
@@ -89,23 +124,23 @@ export interface BackupJob {
 
 export type JobData = MessageJob | MediaJob | CampaignJob | WebhookJob | CleanupJob | BackupJob
 
-// Criar filas
-export const messageQueue = new Queue('messages', queueConfig)
-export const mediaQueue = new Queue('media', queueConfig)
-export const campaignQueue = new Queue('campaigns', queueConfig)
-export const webhookQueue = new Queue('webhooks', queueConfig)
-export const cleanupQueue = new Queue('cleanup', queueConfig)
-export const backupQueue = new Queue('backup', queueConfig)
-export const bulkQueue = new Queue('bulk', queueConfig)
-export const templateQueue = new Queue('template', queueConfig)
-export const flowExecutionQueue = new Queue('flow_execution', queueConfig)
+// Filas inicializadas sob demanda
 
 // BullMQ v4 não requer QueueScheduler; delays e retries são geridos pelo próprio Queue
 
 // Processadores de jobs
 export const createWorkers = () => {
-  // Worker para mensagens de texto
-  const messageWorker = new Worker('messages', async (job: Job) => {
+  if (isBrowser) {
+    return {
+      messageWorker: null,
+      mediaWorker: null,
+      campaignWorker: null,
+      webhookWorker: null,
+    }
+  }
+  const setup = async () => {
+    await ensureQueues()
+    const messageWorker = new WorkerRef('messages', async (job: Job) => {
     return await monitorQueueJob('send_message', async () => {
       const { instanceId, phoneNumber, message, campaignId, templateId, userId, tenantId, encryption } = job.data
       
@@ -129,17 +164,17 @@ export const createWorkers = () => {
         }
       )
     }, { jobId: job.id, userId, tenantId, campaignId })
-  }, {
-    connection: redisQueue,
-    concurrency: 5, // Processar até 5 mensagens simultaneamente
-    limiter: {
-      max: 10, // Máximo 10 mensagens por segundo
-      duration: 1000,
-    },
-  })
+    }, {
+      connection: redisQueue,
+      concurrency: 5,
+      limiter: {
+        max: 10,
+        duration: 1000,
+      },
+    })
 
   // Worker para mídia
-  const mediaWorker = new Worker('media', async (job: Job) => {
+    const mediaWorker = new WorkerRef('media', async (job: Job) => {
     return await monitorQueueJob('send_media', async () => {
       const { instanceId, phoneNumber, mediaUrl, caption, campaignId, userId, tenantId, fileName, mimeType } = job.data
       
@@ -160,17 +195,17 @@ export const createWorkers = () => {
         }
       )
     }, { jobId: job.id, userId, tenantId, campaignId })
-  }, {
-    connection: redisQueue,
-    concurrency: 2, // Processar até 2 mídias simultaneamente (mais lento)
-    limiter: {
-      max: 5, // Máximo 5 mídias por segundo
-      duration: 1000,
-    },
-  })
+    }, {
+      connection: redisQueue,
+      concurrency: 2,
+      limiter: {
+        max: 5,
+        duration: 1000,
+      },
+    })
 
   // Worker para campanhas
-  const campaignWorker = new Worker('campaigns', async (job: Job) => {
+    const campaignWorker = new WorkerRef('campaigns', async (job: Job) => {
     return await monitorQueueJob('process_campaign', async () => {
       const { campaignId, userId, tenantId, batchSize = 10, delayBetweenBatches = 1000 } = job.data
       
@@ -202,13 +237,13 @@ export const createWorkers = () => {
         completedAt: new Date().toISOString()
       }
     }, { jobId: job.id, userId, tenantId, campaignId })
-  }, {
-    connection: redisQueue,
-    concurrency: 1, // Processar apenas 1 campanha por vez
-  })
+    }, {
+      connection: redisQueue,
+      concurrency: 1,
+    })
 
   // Worker para webhooks
-  const webhookWorker = new Worker('webhooks', async (job: Job) => {
+    const webhookWorker = new WorkerRef('webhooks', async (job: Job) => {
     return await monitorQueueJob('process_webhook', async () => {
       const { event, data, webhookUrl, retryCount = 0 } = job.data
       
@@ -239,14 +274,14 @@ export const createWorkers = () => {
         }
       )
     }, { jobId: job.id, webhookUrl, event })
-  }, {
-    connection: redisQueue,
-    concurrency: 3,
-    limiter: {
-      max: 20,
-      duration: 1000,
-    },
-  })
+    }, {
+      connection: redisQueue,
+      concurrency: 3,
+      limiter: {
+        max: 20,
+        duration: 1000,
+      },
+    })
 
   // Event handlers para monitoramento
   messageWorker.on('completed', (job) => {
@@ -281,18 +316,22 @@ export const createWorkers = () => {
     console.error(`❌ Webhook falhou: ${job.id}`, err)
   })
 
-  return {
-    messageWorker,
-    mediaWorker,
-    campaignWorker,
-    webhookWorker,
+    return {
+      messageWorker,
+      mediaWorker,
+      campaignWorker,
+      webhookWorker,
+    }
   }
+  return setup()
 }
 
 // Funções auxiliares para adicionar jobs
 export const queueUtils = {
   // Adicionar job de mensagem
   addMessageJob: async (data: MessageJob['data'], options: any = {}): Promise<Job> => {
+    if (isBrowser) return null as any
+    await ensureQueues()
     const jobData: MessageJob = {
       type: 'send_message',
       data
@@ -308,6 +347,8 @@ export const queueUtils = {
 
   // Adicionar job de mídia
   addMediaJob: async (data: MediaJob['data'], options: any = {}): Promise<Job> => {
+    if (isBrowser) return null as any
+    await ensureQueues()
     const jobData: MediaJob = {
       type: 'send_media',
       data
@@ -323,6 +364,8 @@ export const queueUtils = {
 
   // Adicionar job de campanha
   addCampaignJob: async (data: CampaignJob['data'], options: any = {}): Promise<Job> => {
+    if (isBrowser) return null as any
+    await ensureQueues()
     const jobData: CampaignJob = {
       type: 'process_campaign',
       data
@@ -338,6 +381,8 @@ export const queueUtils = {
 
   // Adicionar job de webhook
   addWebhookJob: async (data: WebhookJob['data'], options: any = {}): Promise<Job> => {
+    if (isBrowser) return null as any
+    await ensureQueues()
     const jobData: WebhookJob = {
       type: 'process_webhook',
       data
@@ -439,10 +484,16 @@ export async function addQueueJob(
   nameOrData: string | Record<string, any>,
   data?: Record<string, any>,
   options: any = {}
-): Promise<Job> {
+): Promise<Job | null> {
+  // Verificar se está rodando no Node.js (servidor)
+  if (typeof window !== 'undefined') {
+    console.warn('addQueueJob não pode ser executado no navegador. Use uma API REST em vez disso.')
+    return null
+  }
+  await ensureQueues()
   const queueName = typeof queue === 'string' ? queue : QUEUE_TYPES[queue as keyof typeof QUEUE_TYPES]
-
-  const queueMap: Record<string, Queue> = {
+  
+  const queueMap: Record<string, any> = {
     messages: messageQueue,
     media: mediaQueue,
     campaigns: campaignQueue,

@@ -1,5 +1,6 @@
 import * as Sentry from '@sentry/react'
-import { BrowserTracing } from '@sentry/tracing'
+import React from 'react'
+import { useLocation, useNavigationType, createRoutesFromChildren, matchRoutes } from 'react-router-dom'
 import { env } from './env'
 
 // Configuração do Sentry
@@ -9,18 +10,20 @@ export const initializeSentry = () => {
       dsn: env.VITE_SENTRY_DSN,
       environment: env.VITE_ENVIRONMENT || 'development',
       integrations: [
-        new BrowserTracing({
-          tracingOrigins: ['localhost', env.VITE_API_URL || '', /^\/api\//],
-          routingInstrumentation: Sentry.reactRouterV6Instrumentation(
-            React.useEffect,
-            useLocation,
-            useNavigationType,
-            createRoutesFromChildren,
-            matchRoutes
-          ),
-        }),
+        ...(typeof window !== 'undefined' ? [
+          Sentry.browserTracingIntegration({
+            routingInstrumentation: Sentry.reactRouterV6Instrumentation(
+              React.useEffect,
+              useLocation,
+              useNavigationType,
+              createRoutesFromChildren,
+              matchRoutes
+            ),
+          })
+        ] : []),
       ],
       tracesSampleRate: env.VITE_ENVIRONMENT === 'production' ? 0.1 : 1.0,
+      tracePropagationTargets: ['localhost', env.VITE_API_URL || '', /^\/api\//],
       beforeSend: (event, hint) => {
         // Filtrar eventos sensíveis
         if (event.exception) {
@@ -69,49 +72,38 @@ export const initializeSentry = () => {
 
 // Classe para monitoramento de performance
 export class PerformanceMonitor {
-  private transaction: Sentry.Transaction | null = null
+  private rootSpan: Sentry.Span | null = null
   private spans: Map<string, Sentry.Span> = new Map()
 
-  startTransaction(name: string, operation: string, metadata?: any) {
-    this.transaction = Sentry.startTransaction({
+  startTransaction(name: string, operation: string) {
+    this.rootSpan = Sentry.startSpanManual({
       name,
-      operation,
-      metadata,
+      op: operation,
     })
-    
-    // Definir contexto de transação
-    Sentry.configureScope(scope => {
-      scope.setSpan(this.transaction)
-    })
-    
-    return this.transaction
+    return this.rootSpan
   }
 
-  startSpan(name: string, operation: string, parentSpan?: Sentry.Span) {
-    const span = (parentSpan || this.transaction)?.startChild({
+  startSpan(name: string, operation: string) {
+    const span = Sentry.startSpanManual({
       name,
-      operation,
+      op: operation,
     })
-    
-    if (span) {
-      this.spans.set(name, span)
-    }
-    
+    this.spans.set(name, span)
     return span
   }
 
   finishSpan(name: string) {
     const span = this.spans.get(name)
     if (span) {
-      span.finish()
+      ;(span as any).end?.()
       this.spans.delete(name)
     }
   }
 
   finishTransaction() {
-    if (this.transaction) {
-      this.transaction.finish()
-      this.transaction = null
+    if (this.rootSpan) {
+      ;(this.rootSpan as any).end?.()
+      this.rootSpan = null
       this.spans.clear()
     }
   }
@@ -143,87 +135,123 @@ const getActiveTransaction = (): Sentry.Transaction | null => {
 }
 
 // Funções auxiliares para monitoramento
-export const monitorFunction = async <T>(
+export async function monitorFunction<T>(
+  name: string,
+  fn: () => Promise<T>,
+  options?: any
+): Promise<T>
+export async function monitorFunction<T>(
   name: string,
   operation: string,
   fn: () => Promise<T>,
-  context?: any
-): Promise<T> => {
-  const transaction = Sentry.startTransaction({
-    name,
-    operation,
-  })
+  options?: any
+): Promise<T>
+export async function monitorFunction<T>(
+  fn: () => Promise<T>,
+  options?: any
+): Promise<T>
+export async function monitorFunction<T>(
+  nameOrFn: any,
+  opOrFnOrOptions?: any,
+  fnMaybe?: any,
+  optionsMaybe?: any
+): Promise<T> {
+  const isNameString = typeof nameOrFn === 'string'
+  const isFirstArgFn = typeof nameOrFn === 'function'
 
-  try {
-    Sentry.configureScope(scope => {
-      scope.setSpan(transaction)
-      if (context) {
-        scope.setContext('function_context', context)
-      }
-    })
+  let name = 'function'
+  let operation = 'function'
+  let fn: () => Promise<T>
+  let options: any = {}
 
-    const result = await fn()
-    
-    transaction.setStatus('ok')
-    return result
-  } catch (error) {
-    transaction.setStatus('internal_error')
-    Sentry.captureException(error, {
-      tags: { operation, function: name },
-      extra: context,
-    })
-    throw error
-  } finally {
-    transaction.finish()
+  if (isNameString) {
+    name = nameOrFn
+    if (typeof opOrFnOrOptions === 'function') {
+      fn = opOrFnOrOptions
+      options = fnMaybe || {}
+    } else {
+      operation = typeof opOrFnOrOptions === 'string' ? opOrFnOrOptions : 'function'
+      fn = fnMaybe
+      options = optionsMaybe || {}
+    }
+  } else if (isFirstArgFn) {
+    fn = nameOrFn
+    options = opOrFnOrOptions || {}
+    name = options?.functionName || options?.name || 'function'
+    operation = options?.operation || options?.category || 'function'
+  } else {
+    throw new Error('Invalid monitorFunction arguments')
   }
+
+  return await Sentry.startSpan({ name, op: operation }, async () => {
+    try {
+      const result = await fn()
+      return result as T
+    } catch (error) {
+      Sentry.captureException(error, {
+        tags: { operation, function: name },
+        extra: options,
+      })
+      throw error
+    }
+  })
 }
 
-export const monitorAPIRequest = async <T>(
+export async function monitorAPIRequest<T>(
   url: string,
   method: string,
   fn: () => Promise<T>,
   context?: any
-): Promise<T> => {
-  const transaction = Sentry.startTransaction({
-    name: `${method.toUpperCase()} ${url}`,
-    operation: 'http',
-  })
+): Promise<T>
+export async function monitorAPIRequest<T>(
+  fn: () => Promise<T>,
+  options?: { url: string; method: string; operation?: string; [key: string]: any }
+): Promise<T>
+export async function monitorAPIRequest<T>(
+  urlOrFn: any,
+  methodOrOptions?: any,
+  fnMaybe?: any,
+  contextMaybe?: any
+): Promise<T> {
+  let url = ''
+  let method = 'GET'
+  let operation = 'http'
+  let fn: () => Promise<T>
+  let context: any = {}
 
-  const span = transaction.startChild({
-    name: 'http.request',
-    op: 'http',
-    description: `${method.toUpperCase()} ${url}`,
-    data: {
-      url,
-      method: method.toUpperCase(),
-      ...context,
-    },
-  })
-
-  try {
-    const result = await fn()
-    
-    span.setStatus('ok')
-    transaction.setStatus('ok')
-    return result
-  } catch (error) {
-    span.setStatus('internal_error')
-    transaction.setStatus('internal_error')
-    
-    Sentry.captureException(error, {
-      tags: { 
-        operation: 'api_request',
-        method: method.toUpperCase(),
-        url,
-      },
-      extra: context,
-    })
-    
-    throw error
-  } finally {
-    span.finish()
-    transaction.finish()
+  if (typeof urlOrFn === 'function') {
+    fn = urlOrFn
+    const options = methodOrOptions || {}
+    url = options.url || ''
+    method = options.method || 'GET'
+    operation = options.operation || 'http'
+    context = options
+  } else {
+    url = urlOrFn
+    method = methodOrOptions
+    fn = fnMaybe
+    context = contextMaybe || {}
   }
+
+  return await Sentry.startSpan({
+    name: `${String(method).toUpperCase()} ${url}`,
+    op: operation,
+  }, async () => {
+    try {
+      const result = await fn()
+      return result as T
+    } catch (error) {
+      Sentry.captureException(error, {
+        tags: {
+          operation: 'api_request',
+          method: String(method).toUpperCase(),
+          url,
+        },
+        extra: context,
+      })
+      throw error
+    }
+  })
 }
 
 // A flexible monitor for DB queries supporting both signatures:
@@ -330,31 +358,17 @@ export const monitorQueueJob = async <T>(
   fn: () => Promise<T>,
   context?: any
 ): Promise<T> => {
-  const transaction = Sentry.startTransaction({
+  const span = Sentry.startSpanManual({
     name: `queue.${queueName}`,
-    operation: 'queue',
-  })
-
-  const span = transaction.startChild({
-    name: 'queue.process',
     op: 'queue',
-    description: `Processing ${queueName} job`,
-    data: {
-      'queue.name': queueName,
-      ...context,
-    },
   })
 
   try {
     const result = await fn()
-    
-    span.setStatus('ok')
-    transaction.setStatus('ok')
+    ;(span as any).setStatus?.('ok')
     return result
   } catch (error) {
-    span.setStatus('internal_error')
-    transaction.setStatus('internal_error')
-    
+    ;(span as any).setStatus?.('internal_error')
     Sentry.captureException(error, {
       tags: { 
         operation: 'queue_job',
@@ -362,11 +376,9 @@ export const monitorQueueJob = async <T>(
       },
       extra: context,
     })
-    
     throw error
   } finally {
-    span.finish()
-    transaction.finish()
+    ;(span as any).end?.()
   }
 }
 

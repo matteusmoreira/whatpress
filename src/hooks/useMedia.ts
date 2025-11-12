@@ -152,10 +152,15 @@ export function useMedia(options: UseMediaOptions = {}): UseMediaReturn {
             
             // Adicionar trabalho de processamento se necessário
             if (result.jobId) {
-              await addQueueJob('media', 'process', {
-                mediaId: result.media.id,
-                jobId: result.jobId
-              })
+              try {
+                await addQueueJob('media', 'process', {
+                  mediaId: result.media.id,
+                  jobId: result.jobId
+                })
+              } catch (error) {
+                console.warn('Não foi possível adicionar trabalho de processamento:', error)
+                // Em ambiente de desenvolvimento, o processamento pode ser feito síncrono
+              }
             }
           }
 
