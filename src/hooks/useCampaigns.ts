@@ -6,7 +6,6 @@ import { useCampaignEngine } from '@/hooks/useCampaignEngine'
 import { useTenant } from '@/hooks/useTenant'
 import { useCache } from './useCache'
 import { monitorDatabaseQuery, monitorFunction } from '@/lib/monitoring'
-import { addQueueJob } from '@/lib/queue'
 
 export interface Campaign {
   id: string
@@ -375,14 +374,6 @@ export function useCampaigns() {
           await engineStartCampaign(campaignId)
           await mutateCampaigns() // Invalidar cache e recarregar
           toast.success('Campanha iniciada com sucesso')
-          
-          // Adicionar job na fila para processamento assíncrono
-          await addQueueJob('campaign', {
-            action: 'start',
-            campaignId,
-            userId: user?.id,
-            tenantId: currentTenant?.id
-          })
         } catch (err: any) {
           console.error('Erro ao iniciar campanha:', err)
           toast.error('Erro ao iniciar campanha')

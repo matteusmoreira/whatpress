@@ -1,7 +1,7 @@
-import Redis from 'ioredis'
 import { env } from './env'
 
-// Configuração do Redis com suporte para cluster e sentinel
+const isBrowser = typeof window !== 'undefined'
+
 const redisConfig = {
   host: env.VITE_REDIS_HOST || 'localhost',
   port: parseInt(env.VITE_REDIS_PORT || '6379'),
@@ -25,37 +25,200 @@ const redisConfig = {
   maxmemory: '256mb',
 }
 
-// Criar cliente Redis para cache
-export const redis = new Redis(redisConfig)
+type RedisLike = {
+  get?: (...args: any[]) => Promise<any>
+  setex?: (...args: any[]) => Promise<any>
+  del?: (...args: any[]) => Promise<any>
+  keys?: (...args: any[]) => Promise<string[]>
+  exists?: (...args: any[]) => Promise<any>
+  incrby?: (...args: any[]) => Promise<number>
+  info?: (...args: any[]) => Promise<any>
+  memory?: (...args: any[]) => Promise<any>
+  status?: string
+  serverInfo?: any
+  on?: (...args: any[]) => any
+  flushall?: (...args: any[]) => Promise<any>
+  set?: (...args: any[]) => Promise<any>
+  multi?: (...args: any[]) => any
+}
 
-// Criar cliente separado para pub/sub
-export const redisPub = new Redis(redisConfig)
-export const redisSub = new Redis(redisConfig)
+const stubClient: RedisLike = {
+  get: async () => null,
+  setex: async () => undefined,
+  del: async () => undefined,
+  keys: async () => [],
+  exists: async () => false,
+  incrby: async () => 0,
+  info: async () => '',
+  memory: async () => '',
+  status: 'offline',
+  serverInfo: {},
+  on: () => undefined,
+  flushall: async () => undefined,
+  set: async () => 'OK',
+  multi: () => ({
+    incr: () => undefined,
+    expire: () => undefined,
+    exec: async () => [],
+  })
+}
 
-// Criar cliente para filas (dedicado)
-export const redisQueue = new Redis({
-  ...redisConfig,
-  db: parseInt(env.VITE_REDIS_QUEUE_DB || '1'),
-  maxRetriesPerRequest: 5,
-  retryDelayOnFailure: 500,
-})
+let redisClientPromise: Promise<any> | null = null
+let redisPubPromise: Promise<any> | null = null
+let redisSubPromise: Promise<any> | null = null
+let redisQueuePromise: Promise<any> | null = null
 
-// Event handlers para monitoramento
-redis.on('connect', () => {
-  console.log('✅ Redis conectado')
-})
+async function loadRedisClient(config: Record<string, any>) {
+  const mod: any = await import('ioredis')
+  const Ctor = mod?.default || mod?.Redis || mod
+  return new Ctor(config)
+}
 
-redis.on('error', (error) => {
-  console.error('❌ Redis erro:', error)
-})
+function getClientPromise(): Promise<any> | null {
+  if (isBrowser) return null
+  if (!redisClientPromise) {
+    redisClientPromise = loadRedisClient(redisConfig)
+  }
+  return redisClientPromise
+}
 
-redis.on('ready', () => {
-  console.log('✅ Redis pronto')
-})
+function getPubPromise(): Promise<any> | null {
+  if (isBrowser) return null
+  if (!redisPubPromise) {
+    redisPubPromise = loadRedisClient(redisConfig)
+  }
+  return redisPubPromise
+}
 
-redis.on('close', () => {
-  console.log('📪 Redis desconectado')
-})
+function getSubPromise(): Promise<any> | null {
+  if (isBrowser) return null
+  if (!redisSubPromise) {
+    redisSubPromise = loadRedisClient(redisConfig)
+  }
+  return redisSubPromise
+}
+
+function getQueuePromise(): Promise<any> | null {
+  if (isBrowser) return null
+  if (!redisQueuePromise) {
+    redisQueuePromise = loadRedisClient({
+      ...redisConfig,
+      db: parseInt(env.VITE_REDIS_QUEUE_DB || '1'),
+      maxRetriesPerRequest: 5,
+      retryDelayOnFailure: 500,
+    })
+  }
+  return redisQueuePromise
+}
+
+export const redis: RedisLike = {
+  async get(...args: any[]) {
+    if (isBrowser) return stubClient.get!(...args)
+    const c = await getClientPromise()!
+    return c.get(...args)
+  },
+  async setex(...args: any[]) {
+    if (isBrowser) return stubClient.setex!(...args)
+    const c = await getClientPromise()!
+    return c.setex(...args)
+  },
+  async del(...args: any[]) {
+    if (isBrowser) return stubClient.del!(...args)
+    const c = await getClientPromise()!
+    return c.del(...args)
+  },
+  async keys(...args: any[]) {
+    if (isBrowser) return stubClient.keys!(...args)
+    const c = await getClientPromise()!
+    return c.keys(...args)
+  },
+  async exists(...args: any[]) {
+    if (isBrowser) return stubClient.exists!(...args)
+    const c = await getClientPromise()!
+    return c.exists(...args)
+  },
+  async incrby(...args: any[]) {
+    if (isBrowser) return stubClient.incrby!(...args)
+    const c = await getClientPromise()!
+    return c.incrby(...args)
+  },
+  async info(...args: any[]) {
+    if (isBrowser) return stubClient.info!(...args)
+    const c = await getClientPromise()!
+    return c.info(...args)
+  },
+  async memory(...args: any[]) {
+    if (isBrowser) return stubClient.memory!(...args)
+    const c = await getClientPromise()!
+    return c.memory(...args)
+  },
+  status: isBrowser ? 'offline' : 'unknown',
+  serverInfo: {},
+  on(...args: any[]) {
+    if (isBrowser) return stubClient.on!(...args)
+    getClientPromise()!.then(c => c.on(...args))
+  },
+  async flushall(...args: any[]) {
+    if (isBrowser) return stubClient.flushall!(...args)
+    const c = await getClientPromise()!
+    return c.flushall(...args)
+  },
+  async set(...args: any[]) {
+    if (isBrowser) return stubClient.set!(...args)
+    const c = await getClientPromise()!
+    return c.set(...args)
+  },
+  multi(...args: any[]) {
+    if (isBrowser) return stubClient.multi!(...args)
+    const m = {
+      incr: (key: string) => {
+        getClientPromise()!.then(c => c.multi().incr(key))
+        return undefined
+      },
+      expire: (key: string, ttl: number) => {
+        getClientPromise()!.then(c => c.multi().expire(key, ttl))
+        return undefined
+      },
+      exec: async () => {
+        const c = await getClientPromise()!
+        const pipeline = c.multi()
+        return pipeline.exec()
+      }
+    }
+    return m
+  }
+}
+
+export const redisPub: RedisLike = {
+  on(...args: any[]) {
+    if (isBrowser) return stubClient.on!(...args)
+    getPubPromise()!.then(c => c.on(...args))
+  }
+}
+
+export const redisSub: RedisLike = {
+  on(...args: any[]) {
+    if (isBrowser) return stubClient.on!(...args)
+    getSubPromise()!.then(c => c.on(...args))
+  }
+}
+
+export const redisQueue: RedisLike = {
+  async get(...args: any[]) {
+    if (isBrowser) return stubClient.get!(...args)
+    const c = await getQueuePromise()!
+    return c.get(...args)
+  },
+  on(...args: any[]) {
+    if (isBrowser) return stubClient.on!(...args)
+    getQueuePromise()!.then(c => c.on(...args))
+  }
+}
+
+redis.on('connect', () => {})
+redis.on('error', () => {})
+redis.on('ready', () => {})
+redis.on('close', () => {})
 
 // Funções auxiliares para cache
 export const cacheUtils = {

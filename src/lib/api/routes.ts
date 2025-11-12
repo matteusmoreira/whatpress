@@ -3,6 +3,7 @@ import { apiAuthMiddleware, requirePermission, requireTenant, apiLoggingMiddlewa
 import { supabase } from '@/lib/supabase'
 import { monitorFunction } from '@/lib/monitoring'
 import { z } from 'zod'
+import { queueUtils } from '@/lib/queue'
 
 // Schemas de validação
 const campaignSchema = z.object({
@@ -184,6 +185,130 @@ campaignsRouter.delete('/:id', requirePermission('campaigns.write'), async (req:
       res.status(204).send()
     } catch (error) {
       res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+})
+
+// Ações de execução de campanha
+campaignsRouter.post('/:id/start', requirePermission('campaigns.write'), async (req: Request, res: Response) => {
+  await monitorFunction('api.campaigns.start', async () => {
+    try {
+      const id = req.params.id
+      const { data: existing, error: fetchErr } = await supabase
+        .from('campaigns')
+        .select('id, status')
+        .eq('id', id)
+        .eq('tenant_id', req.tenantId)
+        .single()
+
+      if (fetchErr) {
+        res.status(fetchErr.code === 'PGRST116' ? 404 : 500).json({ error: fetchErr.message })
+        return
+      }
+
+      if (existing.status === 'running') {
+        res.status(409).json({ error: 'Campaign already running' })
+        return
+      }
+
+      const { data: updated, error: updErr } = await supabase
+        .from('campaigns')
+        .update({ status: 'running', started_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('tenant_id', req.tenantId)
+        .select()
+        .single()
+
+      if (updErr) {
+        res.status(500).json({ error: updErr.message })
+        return
+      }
+
+      const job = await queueUtils.addCampaignJob({
+        campaignId: id,
+        userId: req.apiUser!.id,
+        tenantId: req.tenantId!,
+      })
+
+      res.status(200).json({ data: updated, jobId: job?.id })
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Internal server error' })
+    }
+  })
+})
+
+campaignsRouter.post('/:id/pause', requirePermission('campaigns.write'), async (req: Request, res: Response) => {
+  await monitorFunction('api.campaigns.pause', async () => {
+    try {
+      const id = req.params.id
+      const { data, error } = await supabase
+        .from('campaigns')
+        .update({ status: 'paused' })
+        .eq('id', id)
+        .eq('tenant_id', req.tenantId)
+        .select()
+        .single()
+
+      if (error) {
+        res.status(500).json({ error: error.message })
+        return
+      }
+      res.status(200).json({ data })
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Internal server error' })
+    }
+  })
+})
+
+campaignsRouter.post('/:id/resume', requirePermission('campaigns.write'), async (req: Request, res: Response) => {
+  await monitorFunction('api.campaigns.resume', async () => {
+    try {
+      const id = req.params.id
+      const { data: updated, error: updErr } = await supabase
+        .from('campaigns')
+        .update({ status: 'running' })
+        .eq('id', id)
+        .eq('tenant_id', req.tenantId)
+        .select()
+        .single()
+
+      if (updErr) {
+        res.status(500).json({ error: updErr.message })
+        return
+      }
+
+      const job = await queueUtils.addCampaignJob({
+        campaignId: id,
+        userId: req.apiUser!.id,
+        tenantId: req.tenantId!,
+      })
+
+      res.status(200).json({ data: updated, jobId: job?.id })
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Internal server error' })
+    }
+  })
+})
+
+campaignsRouter.post('/:id/stop', requirePermission('campaigns.write'), async (req: Request, res: Response) => {
+  await monitorFunction('api.campaigns.stop', async () => {
+    try {
+      const id = req.params.id
+      const { data, error } = await supabase
+        .from('campaigns')
+        .update({ status: 'completed', completed_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('tenant_id', req.tenantId)
+        .select()
+        .single()
+
+      if (error) {
+        res.status(500).json({ error: error.message })
+        return
+      }
+      res.status(200).json({ data })
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Internal server error' })
     }
   })
 })

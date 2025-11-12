@@ -3,7 +3,6 @@ import supabase from '@/lib/supabase'
 import type { User } from '@supabase/supabase-js'
 import { isTestEnv } from '@/lib/env'
 import { useRateLimit } from '@/hooks/useRateLimit'
-import { useSecurityAudit } from '@/hooks/useSecurityAudit'
 import { useCache } from '@/hooks/useCache'
 import { monitorFunction } from '@/lib/monitoring'
 
@@ -25,7 +24,6 @@ interface AuthState {
 export function useAuth() {
   const [auth, setAuth] = useState<AuthState>({ user: null, loading: true })
   const { checkAuthenticationRateLimit } = useRateLimit()
-  const { logAuthenticationEvent } = useSecurityAudit()
 
   // Cache para dados do usuário
   const { data: cachedUserProfile, mutate: mutateUserProfile } = useCache(
@@ -127,22 +125,13 @@ export function useAuth() {
           })
 
           if (error) {
-            // Registrar evento de falha de login
-            await logAuthenticationEvent('login_failed', false, { 
-              email: email.trim(),
-              error: error.message 
-            })
             throw new Error(error.message)
           }
 
           const user = mapSupabaseUser(data.user)
           setAuth({ user, loading: false })
           
-          // Registrar evento de login bem-sucedido
-          await logAuthenticationEvent('login', true, { 
-            email: email.trim(),
-            userId: user?.id 
-          })
+          
           
           return user
         } catch (error) {
@@ -157,7 +146,7 @@ export function useAuth() {
         metadata: { email }
       }
     )
-  }, [checkAuthenticationRateLimit, logAuthenticationEvent])
+  }, [checkAuthenticationRateLimit])
 
   const register = useCallback(async (
     email: string, 
@@ -184,11 +173,6 @@ export function useAuth() {
           })
 
           if (error) {
-            // Registrar evento de falha de registro
-            await logAuthenticationEvent('registration_failed', false, { 
-              email: email.trim(),
-              error: error.message 
-            })
             throw new Error(error.message)
           }
 
@@ -199,12 +183,7 @@ export function useAuth() {
           // Atualizar estado local se já houver sessão (sem confirmação necessária)
           setAuth({ user: user ?? null, loading: false })
 
-          // Registrar evento de registro bem-sucedido
-          await logAuthenticationEvent('registration', true, { 
-            email: email.trim(),
-            userId: user?.id,
-            needsConfirmation 
-          })
+          
 
           return { user: user ?? null, needsConfirmation }
         } catch (error) {
@@ -219,7 +198,7 @@ export function useAuth() {
         metadata: { email, name, company }
       }
     )
-  }, [logAuthenticationEvent])
+  }, [])
 
   const logout = useCallback(async () => {
     return monitorFunction(
@@ -231,10 +210,7 @@ export function useAuth() {
             throw new Error(error.message)
           }
           
-          // Registrar evento de logout
-          if (userId) {
-            await logAuthenticationEvent('logout', true, { userId })
-          }
+          
           
           setAuth({ user: null, loading: false })
           return true
@@ -250,7 +226,7 @@ export function useAuth() {
         metadata: { userId: auth.user?.id }
       }
     )
-  }, [auth.user, logAuthenticationEvent])
+  }, [auth.user])
 
   const resetPassword = useCallback(async (email: string) => {
     if (!email) {
@@ -271,18 +247,10 @@ export function useAuth() {
           })
 
           if (error) {
-            // Registrar evento de falha de reset de senha
-            await logAuthenticationEvent('password_reset_failed', false, { 
-              email: email.trim(),
-              error: error.message 
-            })
             throw new Error(error.message)
           }
 
-          // Registrar evento de solicitação de redefinição de senha
-          await logAuthenticationEvent('password_reset_requested', true, { 
-            email: email.trim() 
-          })
+          
 
           return true
         } catch (error) {
@@ -296,7 +264,7 @@ export function useAuth() {
         metadata: { email }
       }
     )
-  }, [checkAuthenticationRateLimit, logAuthenticationEvent])
+  }, [checkAuthenticationRateLimit])
 
   const updateProfile = useCallback(async (updates: Partial<AuthUser>) => {
     if (!auth.user?.id) {
