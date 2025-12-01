@@ -42,7 +42,7 @@ export function Header({ onMenuClick }: HeaderProps) {
           >
             <Menu className="h-5 w-5" />
           </Button>
-          
+
           <div className="relative hidden md:block">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <input
@@ -52,11 +52,11 @@ export function Header({ onMenuClick }: HeaderProps) {
             />
           </div>
 
-          {/* Tenant Selector: mostrar apenas para superadmin ou quando há múltiplas igrejas */}
+          {/* Tenant Selector: mostrar apenas para superadmin ou quando há múltiplas empresas */}
           {!tenantLoading && (isSuperAdmin || tenants.length > 1) && (
             <div className="hidden md:flex md:items-center md:space-x-2">
-              <Select 
-                value={currentTenant?.id} 
+              <Select
+                value={currentTenant?.id}
                 onValueChange={async (value) => {
                   const prev = currentTenant?.id
                   await switchTenant(value)
@@ -153,8 +153,8 @@ export function Header({ onMenuClick }: HeaderProps) {
                   {!tenantLoading && (isSuperAdmin || tenants.length > 1) && (
                     <div className="md:hidden mt-3">
                       <span className="text-xs text-muted-foreground">Tenant</span>
-                      <Select 
-                        value={currentTenant?.id} 
+                      <Select
+                        value={currentTenant?.id}
                         onValueChange={async (value) => {
                           const prev = currentTenant?.id
                           await switchTenant(value)
@@ -176,10 +176,10 @@ export function Header({ onMenuClick }: HeaderProps) {
                       </Select>
                     </div>
                   )}
-                  {/* Mostrar nome da igreja quando seletor oculto */}
+                  {/* Mostrar nome da empresa quando seletor oculto */}
                   {!tenantLoading && tenants.length === 1 && !isSuperAdmin && currentTenant?.name && (
                     <div className="md:hidden mt-3 text-xs text-muted-foreground">
-                      Igreja: <span className="font-medium text-foreground">{currentTenant.name}</span>
+                      Empresa: <span className="font-medium text-foreground">{currentTenant.name}</span>
                     </div>
                   )}
                 </div>
@@ -193,9 +193,9 @@ export function Header({ onMenuClick }: HeaderProps) {
                     Configurações
                   </Button>
                   <div className="border-t border-border my-2"></div>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50"
                     onClick={() => { logout(); navigate('/login') }}
                   >

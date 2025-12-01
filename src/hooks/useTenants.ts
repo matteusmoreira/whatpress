@@ -51,7 +51,7 @@ export function useTenants() {
     setSelectedTenantId(tenantId)
     try {
       window.dispatchEvent(new CustomEvent('tenant:changed', { detail: tenantId }))
-    } catch {}
+    } catch { }
   }, [])
 
   const loadMyTenants = useCallback(async () => {
@@ -112,7 +112,7 @@ export function useTenants() {
         createdTenant = fetched[0] as Tenant
       }
     }
-    if (!createdTenant) throw new Error('Falha ao obter igreja criada')
+    if (!createdTenant) throw new Error('Falha ao obter empresa criada')
 
     // Associate current user as SUPERADMIN of this tenant
     const { error: assocError } = await supabase
@@ -184,7 +184,7 @@ export function useTenants() {
       try {
         const id = (e as CustomEvent<string>).detail
         setSelectedTenantId(id)
-      } catch {}
+      } catch { }
     }
     window.addEventListener('storage', onStorage)
     window.addEventListener('tenant:changed', onChanged as EventListener)

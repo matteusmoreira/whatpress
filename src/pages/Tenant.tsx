@@ -79,7 +79,7 @@ export default function TenantPage() {
           const res = await fetch('/api/roles', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ action: 'list_users', tenantId })
+            body: JSON.stringify({ action: 'list_users', tenantId })
           })
           const result = await res.json()
           if (res.ok) {
@@ -333,8 +333,8 @@ export default function TenantPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Administrador da Igreja</CardTitle>
-            <CardDescription>Selecione o administrador principal desta igreja</CardDescription>
+            <CardTitle>Administrador da Empresa</CardTitle>
+            <CardDescription>Selecione o administrador principal desta empresa</CardDescription>
           </CardHeader>
           <CardContent>
             {tenantUsers.length > 0 ? (
@@ -370,7 +370,7 @@ export default function TenantPage() {
                 </div>
               </div>
             ) : (
-              <div className="text-sm text-muted-foreground">Nenhum usuário associado a esta igreja</div>
+              <div className="text-sm text-muted-foreground">Nenhum usuário associado a esta empresa</div>
             )}
           </CardContent>
         </Card>

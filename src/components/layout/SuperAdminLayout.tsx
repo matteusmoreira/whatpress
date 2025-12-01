@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Outlet, Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
-import { 
+import {
   Crown,
   Building2,
   Users,
@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils'
 
 const navigation = [
   { name: 'Dashboard', href: '/superadmin', icon: BarChart3 },
-  { name: 'Igrejas', href: '/superadmin/tenants', icon: Building2 },
+  { name: 'Empresas', href: '/superadmin/tenants', icon: Building2 },
   { name: 'Usuários', href: '/superadmin/users', icon: Users },
   { name: 'Faturamento', href: '/superadmin/billing', icon: DollarSign },
   { name: 'Sistema', href: '/superadmin/system', icon: Database },
@@ -33,7 +33,7 @@ export default function SuperAdminLayout() {
     <div className="min-h-screen bg-background">
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
-        <div 
+        <div
           className="fixed inset-0 z-40 bg-black/50 lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
